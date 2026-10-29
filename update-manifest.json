@@ -1,5 +1,5 @@
 {
-  "version": "1.1.3",
+  "version": "1.1.4",
   "files": [
     {
       "path": "ANDROID_AND_PRESETS.md",
@@ -18,7 +18,7 @@
     },
     {
       "path": "VERSION",
-      "sha256": "5dae0c0a5ed3cdaa78704e25bb38d72c31018311e933283d06ed4f93360bfc6c",
+      "sha256": "2bde3ae39f59ee21201f87089cf7d215cf58ea437711e3d8e3e65fbc3078c798",
       "url": "https://raw.githubusercontent.com/dayz1233/musicstream/main/VERSION"
     },
     {
@@ -38,7 +38,7 @@
     },
     {
       "path": "main.py",
-      "sha256": "cc386114723f9c209d597c63273cbf4f389d9c730131c466a2f48328989581c3",
+      "sha256": "320385d6774943caac669428d1ae8b977332a68496279cbf4875ac5621a17c77",
       "url": "https://raw.githubusercontent.com/dayz1233/musicstream/main/main.py"
     },
     {
