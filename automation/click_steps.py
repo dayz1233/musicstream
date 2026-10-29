@@ -72,7 +72,8 @@ class ClickSteps:
         elif action == "type":
             label = "type"
         elif action == "scroll":
-            label = "scroll"
+            direction = "up" if int(step.get("dy") or 0) > 0 else "down"
+            label = f"scroll {direction}"
         elif action == "key":
             label = step.get("key") or "key"
         else:
@@ -227,7 +228,7 @@ class ClickSteps:
                 pyautogui.click(int(step["x"]), int(step["y"]))
             elif action == "scroll":
                 pyautogui.moveTo(int(step["x"]), int(step["y"]))
-                pyautogui.scroll(int(step.get("dy") or 0) * 120)
+                pyautogui.scroll(int(step.get("dy") or 0))
             elif action == "type":
                 text = query if step.get("search") else (step.get("text") or "")
                 pyautogui.hotkey("ctrl", "a")
