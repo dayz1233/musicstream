@@ -85,7 +85,7 @@ class MusicStreamApp:
                                               font=("Consolas", 9), insertbackground="white")
         self.log.pack(fill="both", expand=True, padx=20, pady=5)
 
-        self.log_message("Ready. Drag a Spotify playlist CSV onto the drop zone.")
+        self.log_message("Ready. Drop a folder of Spotify CSV files, or single files.")
         self.log_message(f"Program version {updater.local_version()}. New versions install themselves.")
         self.root.after(800, self.start_server)
         self.root.after(2000, self.schedule_updates)
