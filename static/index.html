@@ -335,7 +335,7 @@ async function showSearch() {
 async function doSearch(q) {
   if (q.length < 2) return;
   const tracks = await fetchJSON(`/api/search?q=${encodeURIComponent(q)}`);
-  let html = `<div class="track-list">`;
+  let html = `<button class="dice-btn" data-query="${attr(q)}" onclick="fetchQuery(this.dataset.query)">Download this search from the media server</button><div class="track-list">`;
   tracks.forEach((t, i) => {
     html += trackRow(t, i);
   });
@@ -388,20 +388,15 @@ async function showPresets() {
     <input class="search-bar" id="media-url" placeholder="Media server address, https://..." value="${attr(browser.url || '')}">
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
       <button class="dice-btn" onclick="openMediaBrowser()">Open media browser</button>
-      <button class="dice-btn" onclick="armMediaBrowser()">Remember search box</button>
-      <button class="dice-btn" onclick="askMediaBrowser()">Type current song</button>
+      <button class="dice-btn" onclick="recordPart('search_field')">Record search field</button>
+      <button class="dice-btn" onclick="recordPart('search_button')">Record search button</button>
+      <button class="dice-btn" onclick="recordPart('results')">Record results area</button>
+      <button class="dice-btn" onclick="recordPart('result')">Record a result</button>
+      <button class="dice-btn" onclick="recordPart('download')">Record download</button>
+      <button class="dice-btn" onclick="recordPart('extra')">Record next step</button>
+      <button class="dice-btn" onclick="clearRecording()">Clear recording</button>
     </div>
-    <p id="media-status" style="color:var(--text-sub);margin-bottom:20px">${browser.ready ? 'Search box is remembered.' : 'After the page opens, click Remember search box, then click the search field in that Chrome window.'}</p>
-    <h2 class="section-title">Sequence inside that Chrome window</h2>
-    <p style="color:var(--text-sub);margin-bottom:16px">These steps also stay inside the media Chrome window. A click remembers the button or box, not a point on the screen. Use {query}, {title}, or {artist} in typed text.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-      <button class="dice-btn" onclick="recordBrowserClick()">Record a click</button>
-      <button class="dice-btn" onclick="addBrowserType()">Add typed text</button>
-      <button class="dice-btn" onclick="addBrowserKey()">Add a key</button>
-    </div>
-    <input class="search-bar" id="browser-seq-name" placeholder="Sequence name">
-    <button class="dice-btn" onclick="saveBrowserSequence()">Save sequence</button>
-    <div id="browser-draft" style="background:#1a1a1a;padding:12px;border-radius:8px;margin:12px 0;font-family:monospace;font-size:13px;white-space:pre-wrap">${attr(JSON.stringify(browser.draft || [], null, 2))}</div>
+    <p id="media-status" style="color:var(--text-sub);margin-bottom:20px">Open the media server, then press each record button and click that part of the page. No typing is required. A search in this player then runs those steps, checks the file, and adds it to the library.</p>
     <h2 class="section-title">System-wide mouse</h2>
     <p style="color:var(--text-sub);margin-bottom:16px">This older option moves the real mouse. Screen resolution and window position change the coordinates. Prefer the Chrome sequence above.</p>`;
   const sequences = await fetchJSON('/api/automation/sequences').catch(() => []);
@@ -412,6 +407,39 @@ async function showPresets() {
     </div>
     <div id="recorded-steps" style="background:#1a1a1a;padding:12px;border-radius:8px;margin-bottom:20px;font-family:monospace;font-size:13px;min-height:40px">No steps recorded yet</div>`;
   document.getElementById('content').innerHTML = html;
+}
+
+async function recordPart(part) {
+  const status = document.getElementById('media-status');
+  const labels = {
+    search_field: 'Click the search field in the media Chrome window.',
+    search_button: 'Click the search button in the media Chrome window.',
+    results: 'Click the results area in the media Chrome window.',
+    result: 'Click one search result in the media Chrome window.',
+    download: 'Click the download button in the media Chrome window.',
+    extra: 'Click the next step in the media Chrome window.'
+  };
+  if (status) status.textContent = labels[part] || 'Click in the media Chrome window.';
+  const response = await fetch('/api/media-browser/record?part=' + encodeURIComponent(part), { method: 'POST' });
+  const data = await response.json();
+  if (status) status.textContent = data.ok ? ('Saved. ' + JSON.stringify(data.recipe)) : (data.detail || 'That click was not recorded');
+}
+
+async function clearRecording() {
+  await fetch('/api/media-browser/clear', { method: 'POST' });
+  const status = document.getElementById('media-status');
+  if (status) status.textContent = 'Recording cleared.';
+}
+
+async function fetchQuery(query) {
+  const box = document.getElementById('search-results');
+  if (box) box.insertAdjacentHTML('afterbegin', '<p id="fetch-note">Looking this up on the media server...</p>');
+  const response = await fetch('/api/media-browser/fetch?query=' + encodeURIComponent(query), { method: 'POST' });
+  const data = await response.json();
+  const note = document.getElementById('fetch-note');
+  const message = data.ok ? ('Added ' + data.saved) : (data.detail || data.error || 'The download did not finish');
+  if (note) note.textContent = message;
+  else alert(message);
 }
 
 async function openMediaBrowser() {
