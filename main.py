@@ -1,6 +1,10 @@
 import os
 import json
+import random
 import sqlite3
+import threading
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -46,7 +50,7 @@ manager = ConnectionManager()
 
 # Protect main routes with Depends(get_current_user) where appropriate
 # Note: For full protection, wrap more endpoints. For demo, search/recs are protected.
-from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import mutagen
@@ -489,9 +493,12 @@ def list_playlists():
             tracks = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             tracks = []
+        sample = tracks[0] if isinstance(tracks, list) and tracks else {}
         items.append({
             "name": path.stem[len("playlist_"):],
             "count": len(tracks) if isinstance(tracks, list) else 0,
+            "sample_title": (sample.get("title") if isinstance(sample, dict) else "") or "",
+            "sample_artist": (sample.get("artist") if isinstance(sample, dict) else "") or "",
         })
     return items
 
@@ -504,6 +511,116 @@ def get_playlist(name: str):
         raise HTTPException(404, "Playlist not found")
     tracks = json.loads(path.read_text(encoding="utf-8"))
     return {"name": safe, "tracks": tracks if isinstance(tracks, list) else []}
+
+
+_cover_lock = threading.Lock()
+
+
+def _read_cover_cache():
+    path = DATA_DIR / "cover_cache.json"
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def lookup_release(artist: str, title: str):
+    key = f"{(artist or '').strip().lower()}|{(title or '').strip().lower()}"
+    with _cover_lock:
+        cached = _read_cover_cache().get(key)
+    if cached is not None:
+        return cached
+    found = {"image": None, "preview": None}
+    term = " ".join(part.strip() for part in ((artist or "").split(";")[0], title or "") if part.strip())
+    if term:
+        query = urllib.parse.urlencode({"term": term, "entity": "song", "limit": 5})
+        request = urllib.request.Request(
+            "https://itunes.apple.com/search?" + query,
+            headers={"User-Agent": "MusicStream"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                payload = json.loads(response.read().decode())
+            wanted = (title or "").strip().lower()
+            for item in payload.get("results", []):
+                name = (item.get("trackName") or "").lower()
+                if wanted and wanted not in name and name not in wanted:
+                    continue
+                image = (item.get("artworkUrl100") or "").replace("100x100bb", "300x300bb")
+                found = {"image": image or None, "preview": item.get("previewUrl") or None}
+                break
+        except Exception:
+            found = {"image": None, "preview": None}
+    with _cover_lock:
+        cache = _read_cover_cache()
+        cache[key] = found
+        (DATA_DIR / "cover_cache.json").write_text(json.dumps(cache), encoding="utf-8")
+    return found
+
+
+@app.get("/api/cover")
+def cover(artist: str = "", title: str = ""):
+    image = lookup_release(artist, title).get("image")
+    if not image:
+        raise HTTPException(404, "No cover")
+    return RedirectResponse(image)
+
+
+@app.get("/api/match")
+def match_track(title: str, artist: str = "", db: Session = Depends(get_db)):
+    query = db.query(Track).filter(Track.title.ilike(f"%{title.strip()}%"))
+    first_artist = artist.split(";")[0].strip()
+    if first_artist:
+        query = query.filter(Track.artist.ilike(f"%{first_artist}%"))
+    track = query.first()
+    if not track:
+        track = db.query(Track).filter(Track.title.ilike(f"%{title.strip()}%")).first()
+    if not track or not Path(track.file_path).exists():
+        preview = lookup_release(artist, title).get("preview")
+        return {"found": False, "preview": preview, "title": title, "artist": artist}
+    return {"found": True, "id": track.id, "title": track.title, "artist": track.artist}
+
+
+def _playlist_tracks():
+    pool = []
+    for path in sorted(DATA_DIR.glob("playlist_*.json")):
+        try:
+            tracks = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(tracks, list):
+            pool.extend(track for track in tracks if isinstance(track, dict) and track.get("title"))
+    return pool
+
+
+@app.get("/api/roll")
+def roll_dice():
+    pool = _playlist_tracks()
+    if not pool:
+        return {"kind": "empty"}
+    kind = random.choice(["track", "artist", "album", "category"])
+    picked = random.choice(pool)
+    if kind == "track":
+        return {
+            "kind": "track",
+            "title": picked.get("title"),
+            "artist": picked.get("artist") or "",
+            "album": picked.get("album") or "",
+            "genres": picked.get("genres") or "",
+        }
+    if kind == "artist":
+        artist = (picked.get("artist") or "Unknown").split(";")[0].strip() or "Unknown"
+        matches = [track for track in pool if artist.lower() in (track.get("artist") or "").lower()][:30]
+        return {"kind": "artist", "artist": artist, "tracks": matches}
+    if kind == "album":
+        album = picked.get("album") or "Unknown album"
+        matches = [track for track in pool if (track.get("album") or "") == album][:30]
+        return {"kind": "album", "album": album, "artist": picked.get("artist") or "", "tracks": matches}
+    category = ((picked.get("genres") or "Unknown").split(",")[0].strip()) or "Unknown"
+    matches = [track for track in pool if category.lower() in (track.get("genres") or "").lower()][:30]
+    return {"kind": "category", "category": category, "tracks": matches}
 
 
 if __name__ == "__main__":
