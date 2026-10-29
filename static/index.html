@@ -585,6 +585,7 @@ async function playTrack(id, title, artist, allowDownload = true) {
     document.getElementById('play-btn').textContent = '\u23F8';
     await fetch(`/api/play/${id}`, { method: 'POST' });
   } catch (err) {
+    if (!allowDownload || (err && err.name === 'NotAllowedError')) return;
     const missing = await downloadMissing(title, artist);
     if (!missing) document.querySelector('#now-playing .artist').textContent = 'This song is not downloaded, and the recorded steps did not finish';
   }
