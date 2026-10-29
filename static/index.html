@@ -93,16 +93,22 @@ body {
   height: 90px;
   background: #181818;
   border-top: 1px solid #282828;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) auto minmax(240px, 1fr);
   align-items: center;
-  padding: 0 16px;
-  gap: 16px;
+  padding: 0 20px;
+  gap: 20px;
   z-index: 100;
 }
-#now-playing { flex: 1; min-width: 0; }
+#now-playing { min-width: 0; }
+#now-playing .title, #now-playing .artist {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 #now-playing .title { font-weight: 600; font-size: 14px; }
 #now-playing .artist { font-size: 12px; color: var(--text-sub); }
-#controls { display: flex; align-items: center; gap: 16px; }
+#controls { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .ctrl-btn {
   background: none;
   border: none;
@@ -155,20 +161,21 @@ input[type="file"] { display: none; }
   #main { padding: 12px 12px 110px; }
   .track-row { grid-template-columns: 32px 1fr 60px; }
   .track-row .album, .track-row .duration { display: none; }
-  #player { height: 80px; padding: 0 8px; }
+  #player { height: auto; grid-template-columns: 1fr auto; padding: 8px 12px 10px; }
+  #progress-container { grid-column: 1 / -1; }
 }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="sidebar">
-    <div class="nav-item active" onclick="showHome()">🏠 Home</div>
-    <div class="nav-item" onclick="showSearch()">🔍 Search</div>
-    <div class="nav-item" onclick="showLibrary()">📚 Library</div>
+    <div class="nav-item active" data-page="Home" onclick="showHome()">Home</div>
+    <div class="nav-item" data-page="Search" onclick="showSearch()">Search</div>
+    <div class="nav-item" data-page="Library" onclick="showLibrary()">Library</div>
     <h2>Categories</h2>
     <div id="genre-list"></div>
-    <div class="nav-item" onclick="showPresets()">⚡ Presets & Server</div>
-    <div class="nav-item" onclick="showUpload()">⬆️ Upload Music</div>
+    <div class="nav-item" data-page="Presets" onclick="showPresets()">Presets & Server</div>
+    <div class="nav-item" data-page="Upload" onclick="showUpload()">Upload Music</div>
   </div>
   <div id="main">
     <div id="content"></div>
@@ -181,7 +188,7 @@ input[type="file"] { display: none; }
   </div>
   <div id="controls">
     <button class="ctrl-btn" onclick="prevTrack()">⏮</button>
-    <button class="ctrl-btn play" id="play-btn" onclick="togglePlay()">▶</button>
+    <button class="ctrl-btn" id="play-btn" onclick="togglePlay()">Play</button>
     <button class="ctrl-btn" onclick="nextTrack()">⏭</button>
   </div>
   <div id="progress-container">
@@ -392,29 +399,6 @@ async function runWithQueryAndValidate() {
   const data = await res.json();
   document.getElementById('validation-result').textContent = JSON.stringify(data, null, 2);
 }
-  setActive('Presets');
-  const presets = await fetchJSON('/api/presets');
-  let html = `<h1 class="section-title">Pre-set Actions</h1>
-    <div style="margin-bottom:20px">
-      <input class="search-bar" id="preset-name" placeholder="Preset name">
-      <input class="search-bar" id="preset-query" placeholder="Search query for server">
-      <button onclick="savePreset()" style="background:var(--accent);color:#000;border:none;padding:8px 16px;border-radius:20px;font-weight:600">Save Preset</button>
-    </div>
-    <div id="preset-list">`;
-  presets.forEach(p => {
-    html += `<div class="track-row" onclick="runPreset('${escape(p.query)}')">
-      <span>⚡</span>
-      <div><div class="title">${p.name}</div><div class="artist">${p.query}</div></div>
-      <div></div><div></div><span>▶</span>
-    </div>`;
-  });
-  html += `</div>
-    <h2 class="section-title" style="margin-top:32px">Query Your Media Server</h2>
-    <input class="search-bar" id="server-query" placeholder="Search your media server..." oninput="queryServer(this.value)">
-    <div id="server-results"></div>
-    <p style="color:var(--text-sub);margin-top:16px;font-size:13px">Phone searches can hit /api/search-from-phone. Desktop can display results here for verification against your Spotify playlist file.</p>`;
-  document.getElementById('content').innerHTML = html;
-}
 
 async function savePreset() {
   const name = document.getElementById('preset-name').value;
@@ -424,37 +408,18 @@ async function savePreset() {
   showPresets();
 }
 
-async function queryServer(q) {
-  if (q.length < 2) return;
-  const data = await fetchJSON(`/api/query-server?query=${encodeURIComponent(q)}`);
-  let html = `<div class="track-list">`;
-  data.results.forEach((r, i) => {
-    html += `<div class="track-row">
-      <span>${i+1}</span>
-      <div><div class="title">${r.title}</div><div class="artist">${r.artist}</div></div>
-      <div>${r.path}</div>
-      <div></div>
-      <span onclick="verifyTrack('${escape(r.title)}','${escape(r.artist)}')">✓</span>
-    </div>`;
+function setActive(name) {
+  document.querySelectorAll('#sidebar .nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === name);
   });
-  html += `</div>`;
-  document.getElementById('server-results').innerHTML = html;
 }
 
-async function verifyTrack(title, artist) {
-  const res = await fetch(`/api/verify-playlist?track_title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`);
-  const data = await res.json();
-  alert(data.message + '\n' + data.track);
-}
-
-async function runPreset(query) {
-  document.getElementById('server-query').value = query;
-  queryServer(query);
-}
+function showUpload() {
+  setActive('Upload');
   document.getElementById('content').innerHTML = `
     <h1 class="section-title">Upload Music</h1>
     <div id="upload-area" onclick="document.getElementById('file-input').click()">
-      <p>Click or drag files here to upload (MP3, FLAC, etc.)</p>
+      <p>Click here to upload audio files (MP3, FLAC, OPUS, and more)</p>
       <input type="file" id="file-input" multiple accept="audio/*" onchange="uploadFiles(this.files)">
     </div>
     <p id="upload-status"></p>
@@ -463,17 +428,12 @@ async function runPreset(query) {
 
 async function uploadFiles(files) {
   const form = new FormData();
-  for (let f of files) form.append('files', f);
+  for (const file of files) form.append('files', file);
   document.getElementById('upload-status').textContent = 'Uploading...';
-  const r = await fetch('/api/upload', { method: 'POST', body: form });
-  const data = await r.json();
-  document.getElementById('upload-status').textContent = `Uploaded ${data.count} tracks. Refreshing...`;
-  setTimeout(() => showHome(), 1000);
-}
-
-function setActive(name) {
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  // simple
+  const response = await fetch('/api/upload', { method: 'POST', body: form });
+  const data = await response.json();
+  document.getElementById('upload-status').textContent = `Uploaded ${data.count} tracks.`;
+  setTimeout(() => showHome(), 800);
 }
 
 async function playTrack(id, title, artist) {
@@ -481,20 +441,25 @@ async function playTrack(id, title, artist) {
   document.querySelector('#now-playing .title').textContent = title;
   document.querySelector('#now-playing .artist').textContent = artist;
   audio.src = `/api/stream/${id}`;
-  audio.play();
-  isPlaying = true;
-  document.getElementById('play-btn').textContent = '⏸';
-  await fetch(`/api/play/${id}`, { method: 'POST' });
+  try {
+    await audio.play();
+    document.getElementById('play-btn').textContent = 'Pause';
+    await fetch(`/api/play/${id}`, { method: 'POST' });
+  } catch (err) {
+    document.querySelector('#now-playing .artist').textContent = 'This playlist entry has no audio file yet';
+  }
 }
 
 function togglePlay() {
   if (!currentTrack) return;
   if (audio.paused) {
     audio.play();
-    document.getElementById('play-btn').textContent = '⏸';
+    document.getElementById('play-btn').textContent = 'Pause';
+    sendControl('play');
   } else {
     audio.pause();
-    document.getElementById('play-btn').textContent = '▶';
+    document.getElementById('play-btn').textContent = 'Play';
+    sendControl('pause');
   }
 }
 
@@ -508,25 +473,23 @@ audio.ontimeupdate = () => {
 function seek(e) {
   const bar = document.getElementById('progress-bar');
   const rect = bar.getBoundingClientRect();
-  const pct = (e.clientX - rect.left) / rect.width;
-  audio.currentTime = pct * audio.duration;
+  if (!audio.duration) return;
+  audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
 }
 
-function nextTrack() { /* queue later */ }
-function prevTrack() { /* queue later */ }
+function nextTrack() {}
+function prevTrack() {}
 
-// Add near top of script
 let ws;
 function connectControls() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws/controls`);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === 'control') {
-      if (msg.action === 'play') audio.play();
-      if (msg.action === 'pause') audio.pause();
-      if (msg.action === 'seek' && msg.payload) audio.currentTime = msg.payload.time;
-    }
+    if (msg.type !== 'control') return;
+    if (msg.action === 'play') audio.play();
+    if (msg.action === 'pause') audio.pause();
+    if (msg.action === 'seek' && msg.payload) audio.currentTime = msg.payload.time;
   };
 }
 connectControls();
@@ -535,41 +498,52 @@ function sendControl(action, payload = {}) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({action, payload}));
 }
 
-// Update play/pause to broadcast
-function togglePlay() {
-  if (!currentTrack) return;
-  if (audio.paused) {
-    audio.play();
-    document.getElementById('play-btn').textContent = '⏸';
-    sendControl('play');
-  } else {
-    audio.pause();
-    document.getElementById('play-btn').textContent = '▶';
-    sendControl('pause');
-  }
+async function showPlaylist(name) {
+  setActive('');
+  const data = await fetchJSON('/api/playlists/' + encodeURIComponent(name));
+  let html = `<h1 class="section-title">${name}</h1><p style="color:var(--text-sub);margin-bottom:16px">${data.tracks.length} tracks from your Spotify export. Upload the audio file to play one.</p><div class="track-list">`;
+  data.tracks.forEach((track, i) => {
+    html += `<div class="track-row">
+      <span>${i + 1}</span>
+      <div><div class="title">${track.title || ''}</div><div class="artist">${track.artist || ''}</div></div>
+      <div class="album">${track.album || ''}</div>
+      <div class="duration">${track.duration_ms ? formatTime(track.duration_ms / 1000) : ''}</div>
+      <span></span>
+    </div>`;
+  });
+  html += '</div>';
+  document.getElementById('content').innerHTML = html || '<p>This playlist is empty.</p>';
 }
 
-// Autofill for search
-async function setupAutofill() {
-  const input = document.querySelector('.search-bar');
-  if (!input) return;
-  input.addEventListener('input', async (e) => {
-    const q = e.target.value;
-    if (q.length < 1) return;
-    const suggestions = await fetchJSON(`/api/autofill?q=${encodeURIComponent(q)}`);
-    // Simple datalist
-    let dl = document.getElementById('autofill-list');
-    if (!dl) {
-      dl = document.createElement('datalist');
-      dl.id = 'autofill-list';
-      document.body.appendChild(dl);
-      input.setAttribute('list', 'autofill-list');
+const originalShowHome = showHome;
+showHome = async function () {
+  setActive('Home');
+  const content = document.getElementById('content');
+  content.innerHTML = '<h1 class="section-title">Loading...</h1>';
+  try {
+    const lists = await fetchJSON('/api/playlists').catch(() => []);
+    let data = { for_you: [], recently_added: [] };
+    try { data = await fetchJSON('/api/recommendations'); } catch (err) { /* library can be empty */ }
+    let html = '';
+    if (lists.length) {
+      html += '<h1 class="section-title">Your playlists</h1><div class="carousel">';
+      lists.forEach(list => {
+        html += `<div class="card" onclick="showPlaylist('${escape(list.name)}')"><div class="card-img">♪</div><h3>${list.name}</h3><p>${list.count} tracks</p></div>`;
+      });
+      html += '</div>';
     }
-    dl.innerHTML = suggestions.map(s => `<option value="${s.label}" data-id="${s.id}">`).join('');
-  });
-}
-// Call after content load
-setTimeout(setupAutofill, 500);
+    html += '<h1 class="section-title">Made for you</h1><div class="carousel">';
+    (data.for_you || []).slice(0, 10).forEach(track => { html += cardHTML(track); });
+    if (!(data.for_you || []).length) html += '<p style="color:var(--text-sub)">No audio files yet. Use Upload Music.</p>';
+    html += '</div>';
+    document.getElementById('content').innerHTML = html;
+    loadGenres();
+  } catch (err) {
+    content.innerHTML = `<h1 class="section-title">Could not load</h1><p>${err.message}</p>`;
+  }
+};
+
+showHome();
 </script>
 </body>
 </html>
