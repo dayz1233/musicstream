@@ -109,10 +109,22 @@ class MusicStreamApp:
                   bg="#c45c4a", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
         gap_row = tk.Frame(root, bg="#1a1a1a")
         gap_row.pack(fill="x", padx=20, pady=4)
-        tk.Label(gap_row, text="Seconds between actions", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
+        tk.Label(gap_row, text="Timing", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
+        self.gap_names = {
+            "Page open": "open",
+            "Menu click": "click",
+            "Scroll": "scroll",
+            "Typing": "type",
+            "Key press": "key",
+            "Download wait": "download",
+        }
+        self.gap_choice = tk.StringVar(value="Menu click")
+        menu = tk.OptionMenu(gap_row, self.gap_choice, *self.gap_names.keys(), command=self.show_gap)
+        menu.config(bg="#333", fg="white", relief="flat")
+        menu.pack(side="left", padx=8)
         self.action_gap = tk.Entry(gap_row, width=6, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
-        self.action_gap.pack(side="left", padx=8)
-        self.action_gap.insert(0, "0.8")
+        self.action_gap.pack(side="left", padx=4)
+        self.action_gap.insert(0, "0.4")
         tk.Button(gap_row, text="Save", command=self.save_action_gap,
                   bg="#333", fg="white", relief="flat", padx=10).pack(side="left")
 
@@ -152,10 +164,18 @@ class MusicStreamApp:
                 self.root.after(0, lambda message=message: self.log_message("Media browser failed: " + message))
         threading.Thread(target=work, daemon=True).start()
 
+    def show_gap(self, label):
+        defaults = {"open": "2", "click": "0.4", "scroll": "0.3", "type": "0.6", "key": "0.4", "download": "120"}
+        action = self.gap_names.get(label, "click")
+        self.action_gap.delete(0, "end")
+        self.action_gap.insert(0, defaults.get(action, "0.4"))
+
     def save_action_gap(self):
-        seconds = self.action_gap.get().strip() or "0.8"
-        self.log_message(f"Wait between actions set to {seconds} seconds.")
-        self.post_local("/api/media-browser/delay", {"seconds": seconds})
+        label = self.gap_choice.get()
+        action = self.gap_names.get(label, "click")
+        seconds = self.action_gap.get().strip() or "0"
+        self.log_message(f"{label} wait set to {seconds} seconds.")
+        self.post_local("/api/media-browser/gap", {"action": action, "seconds": seconds})
 
     def open_media_browser(self):
         self.media_seen = 0
