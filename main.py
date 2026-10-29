@@ -487,8 +487,8 @@ def media_browser_status():
 
 
 @app.post("/api/media-browser/open")
-def media_browser_open(address: str = ""):
-    result = click_steps.open_chrome(address)
+def media_browser_open(url: str = "", address: str = ""):
+    result = click_steps.open_chrome(url or address)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error") or "Could not open Chrome")
     return result
@@ -511,9 +511,12 @@ def media_browser_fetch(query: str = "", title: str = "", artist: str = "", dela
     result = click_steps.replay(text, delay)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error") or "The recorded steps failed")
-    downloaded = validator.wait_for_download(timeout=120, started_at=started)
+    click_steps.note("Watching the Downloads folder.", "I will close the media Chrome window when the file is finished.")
+    downloaded = validator.wait_for_download(timeout=180, started_at=started)
     if not downloaded:
+        click_steps.note("No finished download appeared.", "The media window was left open so you can see where it stopped.")
         return {"ok": False, "browser": result, "error": "No download appeared in the Downloads folder."}
+    click_steps.close_window()
     validation = validator.validate(downloaded, {"title": title or query, "artist": artist})
     audio_path = Path(validation.get("extracted") or str(downloaded))
     destination = MUSIC_DIR / audio_path.name
@@ -523,6 +526,7 @@ def media_browser_fetch(query: str = "", title: str = "", artist: str = "", dela
         counter += 1
     shutil.copy2(audio_path, destination)
     scan_library(db)
+    click_steps.note(f"Saved {destination.name}.", "The media Chrome window is closed.")
     return {"ok": True, "browser": result, "validation": validation, "saved": destination.name}
 
 
