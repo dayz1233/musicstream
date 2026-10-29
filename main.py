@@ -1,8 +1,10 @@
 import os
 import json
 import random
+import shutil
 import sqlite3
 import threading
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -542,6 +544,44 @@ def media_browser_run_sequence(name: str, title: str = "", artist: str = "", que
     if not result.get("ok"):
         raise HTTPException(400, result.get("error") or "Sequence failed")
     return result
+
+
+@app.post("/api/media-browser/record")
+def media_browser_record(part: str):
+    result = media_browser.call("record", {"part": part}, timeout=90)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Nothing was recorded")
+    return result
+
+
+@app.post("/api/media-browser/clear")
+def media_browser_clear():
+    return media_browser.call("clear", timeout=15)
+
+
+@app.post("/api/media-browser/fetch")
+def media_browser_fetch(query: str = "", title: str = "", artist: str = "", delay: float = 1.5, db: Session = Depends(get_db)):
+    started = time.time()
+    result = media_browser.call(
+        "fetch",
+        {"query": query, "title": title, "artist": artist, "delay": delay},
+        timeout=90,
+    )
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "The media server search failed")
+    downloaded = validator.wait_for_download(timeout=120, started_at=started)
+    if not downloaded:
+        return {"ok": False, "browser": result, "error": "No download appeared in the Downloads folder."}
+    validation = validator.validate(downloaded, {"title": title or query, "artist": artist})
+    audio_path = Path(validation.get("extracted") or str(downloaded))
+    destination = MUSIC_DIR / audio_path.name
+    counter = 1
+    while destination.exists():
+        destination = MUSIC_DIR / f"{audio_path.stem}_{counter}{audio_path.suffix}"
+        counter += 1
+    shutil.copy2(audio_path, destination)
+    scan_library(db)
+    return {"ok": True, "browser": result, "validation": validation, "saved": destination.name}
 
 
 @app.post("/api/verify-playlist")
