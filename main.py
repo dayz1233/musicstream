@@ -504,8 +504,16 @@ def media_browser_clear():
     return click_steps.clear()
 
 
+@app.post("/api/media-browser/delay")
+def media_browser_delay(seconds: float):
+    result = click_steps.set_delay(seconds)
+    if not result.get("ok", True):
+        raise HTTPException(400, result.get("error") or "Could not save the delay")
+    return result
+
+
 @app.post("/api/media-browser/fetch")
-def media_browser_fetch(query: str = "", title: str = "", artist: str = "", delay: float = 0.8, db: Session = Depends(get_db)):
+def media_browser_fetch(query: str = "", title: str = "", artist: str = "", delay: Optional[float] = None, db: Session = Depends(get_db)):
     text = query or f"{artist} {title}".strip()
     last_error = "The media window did not finish."
     result = {}
