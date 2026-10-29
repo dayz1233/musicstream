@@ -45,7 +45,7 @@ class MusicStreamApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MusicStream Desktop")
-        self.root.geometry("900x700")
+        self.root.geometry("980x860")
         self.root.configure(bg="#1a1a1a")
 
         # Header
@@ -110,7 +110,17 @@ class MusicStreamApp:
                   bg="#c45c4a", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
         self.record_notice = tk.Label(root, text="", fg="#c45c4a", bg="#1a1a1a", font=("Segoe UI", 12, "bold"))
         self.record_notice.pack(anchor="w", padx=20, pady=(4, 0))
-        self.step_list = tk.Listbox(root, selectmode="extended", height=8, bg="#121212", fg="#e0e0e0",
+        tk.Label(root, text="Chrome window map. Drag a point to move that click. Click a point to set its time.",
+                 fg="#b3b3b3", bg="#1a1a1a").pack(anchor="w", padx=20, pady=(6, 0))
+        self.map_canvas = tk.Canvas(root, width=640, height=400, bg="#10140f", highlightthickness=1, highlightbackground="#333")
+        self.map_canvas.pack(padx=20, pady=4)
+        self.map_canvas.bind("<Button-1>", self.map_press)
+        self.map_canvas.bind("<B1-Motion>", self.map_drag)
+        self.map_canvas.bind("<ButtonRelease-1>", self.map_release)
+        self.chrome_window = {"x": 40, "y": 40, "width": 1280, "height": 800}
+        self.map_drag_index = None
+        self.map_drag_moved = False
+        self.step_list = tk.Listbox(root, selectmode="extended", height=6, bg="#121212", fg="#e0e0e0",
                                      selectbackground="#1db954", selectforeground="#04210f",
                                      font=("Consolas", 10), exportselection=False, activestyle="none")
         self.step_list.pack(fill="x", padx=20, pady=4)
@@ -145,7 +155,7 @@ class MusicStreamApp:
         # Status / process log
         tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20)
-        self.log = scrolledtext.ScrolledText(root, height=22, bg="#121212", fg="#e0e0e0",
+        self.log = scrolledtext.ScrolledText(root, height=8, bg="#121212", fg="#e0e0e0",
                                               font=("Consolas", 9), insertbackground="white")
         self.log.pack(fill="both", expand=True, padx=20, pady=5)
 
@@ -202,8 +212,12 @@ class MusicStreamApp:
                 time.sleep(0.5)
         return False
 
-    def refresh_step_list(self, steps, recording):
+    def refresh_step_list(self, steps, recording, window=None):
         self.record_notice.config(text="RECORDING" if recording else "")
+        if window:
+            self.chrome_window = window
+        if self.map_drag_moved:
+            return
         signature = json.dumps(steps, sort_keys=True)
         if signature == getattr(self, "step_signature", None):
             return
@@ -216,6 +230,91 @@ class MusicStreamApp:
             if index < self.step_list.size():
                 self.step_list.selection_set(index)
         self.step_signature = signature
+        self.draw_map()
+
+    def map_scale(self):
+        window = self.chrome_window or {}
+        width = float(window.get("width") or 1280)
+        height = float(window.get("height") or 800)
+        return 640 / width, 400 / height
+
+    def to_canvas(self, x, y):
+        window = self.chrome_window or {}
+        sx, sy = self.map_scale()
+        return (float(x) - float(window.get("x") or 0)) * sx, (float(y) - float(window.get("y") or 0)) * sy
+
+    def to_screen(self, cx, cy):
+        window = self.chrome_window or {}
+        sx, sy = self.map_scale()
+        return int(round(float(window.get("x") or 0) + cx / sx)), int(round(float(window.get("y") or 0) + cy / sy))
+
+    def draw_map(self):
+        canvas = self.map_canvas
+        canvas.delete("all")
+        canvas.create_rectangle(1, 1, 639, 399, outline="#2e7d4f")
+        canvas.create_text(12, 12, anchor="w", fill="#6f8f78", text="1280 × 800 Chrome window")
+        previous = None
+        for index, step in enumerate(self.cached_steps):
+            if step.get("x") is None or step.get("y") is None:
+                continue
+            cx, cy = self.to_canvas(step["x"], step["y"])
+            cx = max(8, min(632, cx))
+            cy = max(8, min(392, cy))
+            if previous:
+                canvas.create_line(previous[0], previous[1], cx, cy, fill="#3d6b4f")
+            color = "#1db954" if index in self.step_list.curselection() else "#d7ffe8"
+            canvas.create_oval(cx - 8, cy - 8, cx + 8, cy + 8, fill=color, outline="#04210f")
+            canvas.create_text(cx, cy - 14, fill="#d7ffe8", text=str(step.get("step")), font=("Segoe UI", 8))
+            previous = (cx, cy)
+
+    def nearest_step(self, cx, cy):
+        best = None
+        best_distance = 18
+        for index, step in enumerate(self.cached_steps):
+            if step.get("x") is None or step.get("y") is None:
+                continue
+            sx, sy = self.to_canvas(step["x"], step["y"])
+            distance = abs(sx - cx) + abs(sy - cy)
+            if distance < best_distance:
+                best = index
+                best_distance = distance
+        return best
+
+    def map_press(self, event):
+        hit = self.nearest_step(event.x, event.y)
+        self.map_drag_moved = False
+        if hit is None:
+            self.map_drag_index = None
+            return
+        self.map_drag_index = hit
+        self.step_list.selection_clear(0, "end")
+        self.step_list.selection_set(hit)
+        self.step_list.see(hit)
+        self.fill_step_fields()
+        self.draw_map()
+
+    def map_drag(self, event):
+        if self.map_drag_index is None:
+            return
+        self.map_drag_moved = True
+        step = self.cached_steps[self.map_drag_index]
+        x, y = self.to_screen(event.x, event.y)
+        step["x"] = x
+        step["y"] = y
+        self.draw_map()
+
+    def map_release(self, event):
+        if self.map_drag_index is None or not self.map_drag_moved:
+            self.map_drag_moved = False
+            return
+        step = self.cached_steps[self.map_drag_index]
+        x, y = self.to_screen(event.x, event.y)
+        step["x"] = x
+        step["y"] = y
+        self.step_signature = json.dumps(self.cached_steps, sort_keys=True)
+        self.map_drag_moved = False
+        self.draw_map()
+        self.post_local("/api/media-browser/move", {"index": step.get("step"), "x": x, "y": y})
 
     def fill_step_fields(self, _event=None):
         picked = self.step_list.curselection()
@@ -269,7 +368,9 @@ class MusicStreamApp:
                 self.root.after(1500, self.poll_media_steps)
                 return
             steps = data.get("steps") or []
-            self.root.after(0, lambda steps=steps, recording=bool(data.get("recording")): self.refresh_step_list(steps, recording))
+            self.root.after(0, lambda data=data: self.refresh_step_list(
+                data.get("steps") or [], bool(data.get("recording")), data.get("window")
+            ))
             fresh = steps[self.media_seen:]
             self.media_seen = len(steps)
             for step in fresh:
