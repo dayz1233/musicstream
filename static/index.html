@@ -401,7 +401,7 @@ async function openMediaBrowser() {
   const url = field ? field.value.trim() : '';
   const status = document.getElementById('media-status');
   if (status) status.textContent = 'Opening a normal Chrome tab. Click through the site. The first place you type becomes the search bar.';
-  const response = await fetch('/api/media-browser/open?url=' + encodeURIComponent(url), { method: 'POST' });
+  const response = await fetch('/api/media-browser/open?address=' + encodeURIComponent(url), { method: 'POST' });
   const data = await response.json();
   if (!data.ok) {
     alert(data.detail || data.error || 'Could not open Chrome');
