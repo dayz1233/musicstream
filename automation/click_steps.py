@@ -142,6 +142,7 @@ class ClickSteps:
         self.gaps = dict(DEFAULT_GAPS)
         self.traffic = TrafficWatch()
         self.abort = False
+        self._key_proc = None
         self._load()
 
     def _load(self):
@@ -440,20 +441,60 @@ class ClickSteps:
         self.abort = False
         self.note("RECORDING. Click through the site. Press Stop when you are done.", "")
         self._mouse = mouse.Listener(on_click=self._on_click, on_scroll=self._on_scroll)
-        self._keys = keyboard.Listener(on_press=self._on_key)
         self._mouse.start()
-        self._keys.start()
+        self._start_keys()
         return self.status()
+
+    def _start_keys(self):
+        script = Path(__file__).with_name("key_watch.py")
+        try:
+            self._key_proc = subprocess.Popen(
+                [sys.executable, str(script)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except OSError as exc:
+            self.note("Key watching did not start.", str(exc))
+            return
+        threading.Thread(target=self._read_keys, daemon=True).start()
+
+    def _read_keys(self):
+        proc = self._key_proc
+        if proc is None or proc.stdout is None:
+            return
+        for line in proc.stdout:
+            if not self.recording:
+                break
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            self._handle_key(item.get("key") or "", item.get("char") or "")
+
+    def _stop_keys(self):
+        proc = self._key_proc
+        self._key_proc = None
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
     def stop(self) -> dict:
         self._flush_typing()
         self.recording = False
-        for listener in (self._mouse, self._keys):
-            try:
-                if listener:
-                    listener.stop()
-            except Exception:
-                pass
+        self._stop_keys()
+        try:
+            if self._mouse:
+                self._mouse.stop()
+        except Exception:
+            pass
         self._mouse = None
         self._keys = None
         with self.lock:
@@ -491,25 +532,25 @@ class ClickSteps:
             count = len(self.steps)
         self.note(f"Recorded step {count}: scroll.", "I think you are lining the page up. Do the next action, or press Stop.")
 
-    def _on_key(self, key):
+    def _handle_key(self, name, char):
         if not self.recording:
             return
-        from pynput.keyboard import Key
-        if key == Key.enter:
+        name = (name or "").lower()
+        if name == "enter":
             self._flush_typing()
             with self.lock:
                 self._add_step({"action": "key", "key": "enter"})
             return
-        if key == Key.tab:
+        if name == "tab":
             self._flush_typing()
             with self.lock:
                 self._add_step({"action": "key", "key": "tab"})
+            self.note("Recorded Tab.", "The website still has the key, so it can move to the next field.")
             return
-        if key == Key.backspace:
+        if name == "backspace":
             self._typing = self._typing[:-1]
             self._arm_flush()
             return
-        char = getattr(key, "char", None)
         if not char:
             return
         if not self._typing:
@@ -558,7 +599,7 @@ class ClickSteps:
             return {"ok": False, "error": "No steps recorded yet. Open the media browser and click through the site once."}
         try:
             import pyautogui
-            from pynput.keyboard import Controller
+            from pynput.keyboard import Controller, Key
         except ImportError as exc:
             return {"ok": False, "error": str(exc)}
         labels = [self._public_step(index, step)["action"] for index, step in enumerate(steps, start=1)]
@@ -596,7 +637,9 @@ class ClickSteps:
                 time.sleep(0.1)
                 typer.type(text)
             elif action == "key":
-                pyautogui.press(step.get("key") or "enter")
+                special = {"enter": Key.enter, "tab": Key.tab, "space": Key.space}.get(step.get("key") or "enter", Key.enter)
+                typer.press(special)
+                typer.release(special)
             if not self._pause(step.get("wait", 0.4)):
                 self.note("E-stop.", "Stopped.")
                 self.close_window()
