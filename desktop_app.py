@@ -107,26 +107,39 @@ class MusicStreamApp:
                   bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
         tk.Button(media_row, text="Clear", command=self.clear_media_recording,
                   bg="#c45c4a", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
-        gap_row = tk.Frame(root, bg="#1a1a1a")
-        gap_row.pack(fill="x", padx=20, pady=4)
-        tk.Label(gap_row, text="Timing", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
-        self.gap_names = {
-            "Page open": "open",
-            "Menu click": "click",
-            "Scroll": "scroll",
-            "Typing": "type",
-            "Key press": "key",
-            "Download wait": "download",
-        }
-        self.gap_choice = tk.StringVar(value="Menu click")
-        menu = tk.OptionMenu(gap_row, self.gap_choice, *self.gap_names.keys(), command=self.show_gap)
-        menu.config(bg="#333", fg="white", relief="flat")
-        menu.pack(side="left", padx=8)
-        self.action_gap = tk.Entry(gap_row, width=6, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
-        self.action_gap.pack(side="left", padx=4)
-        self.action_gap.insert(0, "0.4")
-        tk.Button(gap_row, text="Save", command=self.save_action_gap,
-                  bg="#333", fg="white", relief="flat", padx=10).pack(side="left")
+        self.record_notice = tk.Label(root, text="", fg="#c45c4a", bg="#1a1a1a", font=("Segoe UI", 12, "bold"))
+        self.record_notice.pack(anchor="w", padx=20, pady=(4, 0))
+        self.step_list = tk.Listbox(root, selectmode="extended", height=8, bg="#121212", fg="#e0e0e0",
+                                     selectbackground="#1db954", selectforeground="#04210f",
+                                     font=("Consolas", 10), exportselection=False, activestyle="none")
+        self.step_list.pack(fill="x", padx=20, pady=4)
+        self.step_list.bind("<<ListboxSelect>>", self.fill_step_fields)
+        self.cached_steps = []
+        edit_row = tk.Frame(root, bg="#1a1a1a")
+        edit_row.pack(fill="x", padx=20, pady=4)
+        tk.Label(edit_row, text="Seconds to next", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
+        self.step_wait = tk.Entry(edit_row, width=6, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
+        self.step_wait.pack(side="left", padx=6)
+        tk.Label(edit_row, text="Name", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
+        self.step_name = tk.Entry(edit_row, width=16, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
+        self.step_name.pack(side="left", padx=6)
+        tk.Button(edit_row, text="Apply to selected", command=self.apply_steps,
+                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
+        run_row = tk.Frame(root, bg="#1a1a1a")
+        run_row.pack(fill="x", padx=20, pady=4)
+        tk.Button(run_row, text="E-STOP", command=self.estop_media,
+                  bg="#c45c4a", fg="white", relief="flat", padx=16).pack(side="left")
+        self.test_query = tk.Entry(run_row, width=18, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
+        self.test_query.pack(side="left", padx=8)
+        self.test_query.insert(0, "test song")
+        tk.Button(run_row, text="Test", command=self.test_media,
+                  bg="#1db954", fg="white", relief="flat", padx=12).pack(side="left")
+        tk.Label(run_row, text="Download wait", fg="#b3b3b3", bg="#1a1a1a").pack(side="left", padx=(12, 4))
+        self.download_wait = tk.Entry(run_row, width=6, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
+        self.download_wait.pack(side="left")
+        self.download_wait.insert(0, "120")
+        tk.Button(run_row, text="Save", command=self.save_download_wait,
+                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
 
         # Status / process log
         tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
@@ -164,18 +177,57 @@ class MusicStreamApp:
                 self.root.after(0, lambda message=message: self.log_message("Media browser failed: " + message))
         threading.Thread(target=work, daemon=True).start()
 
-    def show_gap(self, label):
-        defaults = {"open": "2", "click": "0.4", "scroll": "0.3", "type": "0.6", "key": "0.4", "download": "120"}
-        action = self.gap_names.get(label, "click")
-        self.action_gap.delete(0, "end")
-        self.action_gap.insert(0, defaults.get(action, "0.4"))
+    def refresh_step_list(self, steps, recording):
+        self.record_notice.config(text="RECORDING" if recording else "")
+        signature = json.dumps(steps, sort_keys=True)
+        if signature == getattr(self, "step_signature", None):
+            return
+        selected = set(self.step_list.curselection())
+        self.cached_steps = steps
+        self.step_list.delete(0, "end")
+        for step in steps:
+            self.step_list.insert("end", f"{step.get('step')}. {step.get('action')}    {step.get('wait', 0)}s to next")
+        for index in selected:
+            if index < self.step_list.size():
+                self.step_list.selection_set(index)
+        self.step_signature = signature
 
-    def save_action_gap(self):
-        label = self.gap_choice.get()
-        action = self.gap_names.get(label, "click")
-        seconds = self.action_gap.get().strip() or "0"
-        self.log_message(f"{label} wait set to {seconds} seconds.")
-        self.post_local("/api/media-browser/gap", {"action": action, "seconds": seconds})
+    def fill_step_fields(self, _event=None):
+        picked = self.step_list.curselection()
+        if len(picked) != 1:
+            return
+        step = self.cached_steps[picked[0]]
+        self.step_wait.delete(0, "end")
+        self.step_wait.insert(0, str(step.get("wait", 0.4)))
+        self.step_name.delete(0, "end")
+        self.step_name.insert(0, step.get("name") or "")
+
+    def apply_steps(self):
+        picked = [str(index + 1) for index in self.step_list.curselection()]
+        if not picked:
+            self.log_message("Select one or more steps first.")
+            return
+        query = {"indexes": ",".join(picked)}
+        if self.step_wait.get().strip():
+            query["wait"] = self.step_wait.get().strip()
+        if self.step_name.get().strip():
+            query["name"] = self.step_name.get().strip()
+        self.step_signature = None
+        self.log_message(f"Updating steps {query['indexes']}.")
+        self.post_local("/api/media-browser/steps", query)
+
+    def estop_media(self):
+        self.log_message("E-stop.")
+        self.post_local("/api/media-browser/estop")
+
+    def test_media(self):
+        self.log_message("Testing the recorded steps.")
+        self.post_local("/api/media-browser/test", {"query": self.test_query.get().strip()})
+
+    def save_download_wait(self):
+        seconds = self.download_wait.get().strip() or "120"
+        self.log_message(f"Download wait set to {seconds} seconds.")
+        self.post_local("/api/media-browser/gap", {"action": "download", "seconds": seconds})
 
     def open_media_browser(self):
         self.media_seen = 0
@@ -191,6 +243,7 @@ class MusicStreamApp:
             except Exception:
                 return
             steps = data.get("steps") or []
+            self.root.after(0, lambda steps=steps, recording=bool(data.get("recording")): self.refresh_step_list(steps, recording))
             fresh = steps[self.media_seen:]
             self.media_seen = len(steps)
             for step in fresh:
@@ -202,6 +255,8 @@ class MusicStreamApp:
                 self.root.after(0, lambda message=message: self.log_message(message))
             if data.get("recording") or data.get("message"):
                 self.root.after(500, self.poll_media_steps)
+            else:
+                self.root.after(1500, self.poll_media_steps)
         threading.Thread(target=work, daemon=True).start()
 
     def stop_media_recording(self):
