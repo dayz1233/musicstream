@@ -8,6 +8,7 @@ import sys
 import csv
 import json
 import threading
+import time
 import subprocess
 import tkinter as tk
 from tkinter import scrolledtext, messagebox, filedialog, simpledialog
@@ -161,6 +162,12 @@ class MusicStreamApp:
 
     def post_local(self, path, query=None):
         def work():
+            if not self._server_ready():
+                self.root.after(0, lambda: self.log_message(
+                    "The music server is not running, so that button could not connect. "
+                    "Look for a [server] line above. If there is none, close this window and open MusicStream again."
+                ))
+                return
             url = "http://127.0.0.1:8000" + path
             if query:
                 url += "?" + urllib.parse.urlencode(query)
@@ -176,6 +183,24 @@ class MusicStreamApp:
                 message = str(exc)
                 self.root.after(0, lambda message=message: self.log_message("Media browser failed: " + message))
         threading.Thread(target=work, daemon=True).start()
+
+    def _server_ready(self):
+        deadline = time.time() + 40
+        restarted = False
+        while time.time() < deadline:
+            if not restarted and SERVER_PROCESS is not None and SERVER_PROCESS.poll() is not None:
+                restarted = True
+                self.root.after(0, lambda: self.log_message("The server had stopped. Starting it again."))
+                self._start_server()
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:8000/api/media-browser", timeout=2) as response:
+                    response.read()
+                return True
+            except urllib.error.HTTPError:
+                return True
+            except Exception:
+                time.sleep(0.5)
+        return False
 
     def refresh_step_list(self, steps, recording):
         self.record_notice.config(text="RECORDING" if recording else "")
@@ -241,6 +266,7 @@ class MusicStreamApp:
                 with urllib.request.urlopen("http://127.0.0.1:8000/api/media-browser", timeout=3) as response:
                     data = json.loads(response.read().decode("utf-8", "replace"))
             except Exception:
+                self.root.after(1500, self.poll_media_steps)
                 return
             steps = data.get("steps") or []
             self.root.after(0, lambda steps=steps, recording=bool(data.get("recording")): self.refresh_step_list(steps, recording))
@@ -413,6 +439,8 @@ class MusicStreamApp:
             return
         for line in SERVER_PROCESS.stdout:
             self.root.after(0, lambda l=line: self.log_message("[server] " + l.rstrip()))
+        code = SERVER_PROCESS.poll() if SERVER_PROCESS else None
+        self.root.after(0, lambda code=code: self.log_message(f"Server stopped (code {code})."))
 
     def stop_server(self):
         global SERVER_PROCESS
