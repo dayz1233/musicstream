@@ -384,7 +384,7 @@ async function showPresets() {
   setActive('Presets');
   const browser = await fetchJSON('/api/media-browser').catch(() => ({ url: '', ready: false, open: false }));
   let html = `<h1 class="section-title">Media server</h1>
-    <p style="color:var(--text-sub);margin-bottom:16px">This opens a separate Chrome window. Typing and clicks stay in that window, so your mouse is left alone.</p>
+    <p style="color:var(--text-sub);margin-bottom:16px">Clicks and typing stay inside that Chrome window on the laptop running MusicStream. They are not screen coordinates, so your resolution and window size do not matter. The window opens on the laptop, even if you press this from another computer.</p>
     <input class="search-bar" id="media-url" placeholder="Media server address, https://..." value="${attr(browser.url || '')}">
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
       <button class="dice-btn" onclick="openMediaBrowser()">Open media browser</button>
@@ -392,8 +392,18 @@ async function showPresets() {
       <button class="dice-btn" onclick="askMediaBrowser()">Type current song</button>
     </div>
     <p id="media-status" style="color:var(--text-sub);margin-bottom:20px">${browser.ready ? 'Search box is remembered.' : 'After the page opens, click Remember search box, then click the search field in that Chrome window.'}</p>
-    <h2 class="section-title">Old mouse sequences</h2>
-    <p style="color:var(--text-sub);margin-bottom:16px">These move the real mouse. Use the media browser above instead.</p>`;
+    <h2 class="section-title">Sequence inside that Chrome window</h2>
+    <p style="color:var(--text-sub);margin-bottom:16px">These steps also stay inside the media Chrome window. A click remembers the button or box, not a point on the screen. Use {query}, {title}, or {artist} in typed text.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="dice-btn" onclick="recordBrowserClick()">Record a click</button>
+      <button class="dice-btn" onclick="addBrowserType()">Add typed text</button>
+      <button class="dice-btn" onclick="addBrowserKey()">Add a key</button>
+    </div>
+    <input class="search-bar" id="browser-seq-name" placeholder="Sequence name">
+    <button class="dice-btn" onclick="saveBrowserSequence()">Save sequence</button>
+    <div id="browser-draft" style="background:#1a1a1a;padding:12px;border-radius:8px;margin:12px 0;font-family:monospace;font-size:13px;white-space:pre-wrap">${attr(JSON.stringify(browser.draft || [], null, 2))}</div>
+    <h2 class="section-title">System-wide mouse</h2>
+    <p style="color:var(--text-sub);margin-bottom:16px">This older option moves the real mouse. Screen resolution and window position change the coordinates. Prefer the Chrome sequence above.</p>`;
   const sequences = await fetchJSON('/api/automation/sequences').catch(() => []);
   html += `<div style="margin-bottom:20px">
       <input class="search-bar" id="seq-name" placeholder="Sequence name">
@@ -405,12 +415,20 @@ async function showPresets() {
 }
 
 async function openMediaBrowser() {
-  const url = document.getElementById('media-url').value;
+  const field = document.getElementById('media-url');
+  const url = field ? field.value.trim() : '';
   const status = document.getElementById('media-status');
-  status.textContent = 'Opening a separate Chrome window...';
-  const response = await fetch('/api/media-browser/open?url=' + encodeURIComponent(url), { method: 'POST' });
-  const data = await response.json();
-  status.textContent = data.ok ? 'Chrome is open. Click Remember search box, then click the search field in that window.' : (data.detail || data.error || 'Could not open Chrome');
+  if (status) status.textContent = 'Opening Chrome on the laptop that runs MusicStream...';
+  try {
+    const response = await fetch('/api/media-browser/open?url=' + encodeURIComponent(url === 'https://' ? '' : url), { method: 'POST' });
+    const data = await response.json();
+    const message = data.ok ? 'Chrome is open on the laptop. If you had closed it, it was started again.' : (data.detail || data.error || 'Could not open Chrome');
+    if (status) status.textContent = message;
+    if (!data.ok) alert(message);
+  } catch (err) {
+    if (status) status.textContent = err.message;
+    alert(err.message);
+  }
 }
 
 async function armMediaBrowser() {
@@ -439,6 +457,40 @@ async function askMediaBrowser() {
 }
 
 let recordedSteps = [];
+
+async function recordBrowserClick() {
+  const box = document.getElementById('browser-draft');
+  if (box) box.textContent = 'Click the control inside the media Chrome window.';
+  const response = await fetch('/api/media-browser/sequence/click', { method: 'POST' });
+  const data = await response.json();
+  if (box) box.textContent = data.ok ? JSON.stringify(data.draft, null, 2) : (data.detail || 'Click was not recorded');
+}
+
+async function addBrowserType() {
+  const text = prompt('Text to type. {query}, {title}, and {artist} are filled in later.', '{query}');
+  if (!text) return;
+  const response = await fetch('/api/media-browser/sequence/step?action=type&text=' + encodeURIComponent(text), { method: 'POST' });
+  const data = await response.json();
+  const box = document.getElementById('browser-draft');
+  if (box) box.textContent = data.ok ? JSON.stringify(data.draft, null, 2) : (data.detail || 'Text was not added');
+}
+
+async function addBrowserKey() {
+  const key = prompt('Key name, such as Enter, Tab, or Escape', 'Enter');
+  if (!key) return;
+  const response = await fetch('/api/media-browser/sequence/step?action=key&key=' + encodeURIComponent(key), { method: 'POST' });
+  const data = await response.json();
+  const box = document.getElementById('browser-draft');
+  if (box) box.textContent = data.ok ? JSON.stringify(data.draft, null, 2) : (data.detail || 'Key was not added');
+}
+
+async function saveBrowserSequence() {
+  const name = document.getElementById('browser-seq-name').value;
+  const response = await fetch('/api/media-browser/sequence/save?name=' + encodeURIComponent(name), { method: 'POST' });
+  const data = await response.json();
+  alert(data.ok ? ('Saved ' + data.saved) : (data.detail || 'Sequence was not saved'));
+  if (data.ok) showPresets();
+}
 
 async function startRecording() {
   const label = prompt("Label for this click position (e.g. search_box):") || "position";
@@ -802,7 +854,7 @@ showHome = async function () {
     const lists = (await fetchJSON('/api/playlists').catch(() => [])).filter(list => list.count > 0);
     let data = { for_you: [], recently_added: [] };
     try { data = await fetchJSON('/api/recommendations'); } catch (err) { /* library can be empty */ }
-    let html = '<button class="dice-btn" onclick="rollDice()">Roll the dice</button> <button class="dice-btn" onclick="showPresets()">Media server</button>';
+    let html = '<button class="dice-btn" onclick="rollDice()">Roll the dice</button> <button class="dice-btn" onclick="openMediaBrowser()">Media server</button>';
     if (lists.length) {
       html += '<h1 class="section-title">Your playlists</h1><div class="playlist-grid">';
       lists.forEach(list => {
