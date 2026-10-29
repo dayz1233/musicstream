@@ -48,17 +48,19 @@ class MusicStreamApp:
         self.drop_label = tk.Label(self.drop_frame,
                                     text="Drop a folder of CSV files here\nor click to choose a folder",
                                     fg="#ffffff", bg="#2a2a2a", font=("Segoe UI", 12))
-        self.drop_label.pack(expand=True)
+        self.drop_label.pack(fill="both", expand=True)
+        self.drop_label.bind("<Button-1>", lambda e: self.browse_csv())
 
         if HAS_DND:
-            self.drop_frame.drop_target_register(DND_FILES)
-            self.drop_frame.dnd_bind('<<Drop>>', self.on_drop)
+            for widget in (self.root, self.drop_frame, self.drop_label):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self.on_drop)
         self.drop_frame.bind("<Button-1>", lambda e: self.browse_csv())
 
         # Buttons
         btn_frame = tk.Frame(root, bg="#1a1a1a")
         btn_frame.pack(pady=5)
-        tk.Button(btn_frame, text="Start Server", command=self.start_server,
+        tk.Button(btn_frame, text="Import folder", command=self.browse_csv,
                   bg="#1db954", fg="white", relief="flat", padx=15).pack(side="left", padx=5)
         tk.Button(btn_frame, text="Stop Server", command=self.stop_server,
                   bg="#c45c4a", fg="white", relief="flat", padx=15).pack(side="left", padx=5)
@@ -85,7 +87,11 @@ class MusicStreamApp:
                                               font=("Consolas", 9), insertbackground="white")
         self.log.pack(fill="both", expand=True, padx=20, pady=5)
 
-        self.log_message("Ready. Drop a folder of Spotify CSV files, or single files.")
+        self.log_message("Ready. Drop a folder anywhere on this window, or click Import folder.")
+        if HAS_DND:
+            self.log_message("Drag-and-drop is on.")
+        else:
+            self.log_message("Drag-and-drop is off. Install tkinterdnd2, or use Import folder.")
         self.log_message(f"Program version {updater.local_version()}. New versions install themselves.")
         self.root.after(800, self.start_server)
         self.root.after(2000, self.schedule_updates)
@@ -96,7 +102,28 @@ class MusicStreamApp:
         self.root.update_idletasks()
 
     def on_drop(self, event):
-        self.ingest_paths(self.root.tk.splitlist(event.data))
+        self.log_message("Drop received.")
+        self.ingest_paths(self._drop_paths(event.data))
+
+    def _drop_paths(self, data):
+        try:
+            parts = list(self.root.tk.splitlist(data))
+        except Exception:
+            parts = [str(data)]
+        cleaned = []
+        for part in parts:
+            text = str(part).strip()
+            if text.startswith("{") and text.endswith("}"):
+                text = text[1:-1]
+            text = text.strip('"')
+            if text.lower().startswith("file:"):
+                from urllib.parse import unquote, urlparse
+                text = unquote(urlparse(text).path)
+                if len(text) > 2 and text[0] == "/" and text[2] == ":":
+                    text = text[1:]
+            if text:
+                cleaned.append(text)
+        return cleaned
 
     def browse_csv(self):
         folder = filedialog.askdirectory(title="Select a folder of Spotify CSV files")
@@ -233,7 +260,7 @@ class MusicStreamApp:
             remote = str(result.get("remote") or "")
             if not changed or (remote and updater.applied_version() == remote):
                 updater.mark_applied(remote)
-                self.log_message(f"Up to date ({remote or updater.local_version()}).")
+                self.log_message(f"Up to date. Remote {remote or '?'}, this copy {updater.local_version()}.")
                 return
             self.log_message("Updated: " + ", ".join(changed))
             self.log_message("Restarting once to use the new version.")
