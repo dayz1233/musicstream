@@ -11,4 +11,5 @@ pywinauto==0.6.8
 pillow==10.4.0
 websockets==13.1
 tkinterdnd2==0.4.2
+playwright==1.49.1
 
