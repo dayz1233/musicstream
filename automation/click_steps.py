@@ -17,6 +17,7 @@ CONFIG = BASE / "data" / "click_steps.json"
 PROFILE = BASE / "data" / "chrome-media-window"
 DEBUG_PORT = 9333
 IDLE_SECONDS = 20
+DEFAULT_GAPS = {"open": 2.0, "click": 0.4, "scroll": 0.3, "type": 0.6, "key": 0.4, "download": 120.0}
 
 
 class TrafficWatch:
