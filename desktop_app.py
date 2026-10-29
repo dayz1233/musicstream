@@ -104,22 +104,20 @@ class MusicStreamApp:
         self.media_url.insert(0, "https://")
         tk.Button(media_row, text="Open media browser", command=self.open_media_browser,
                   bg="#1db954", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
-        tk.Button(media_row, text="Remember search box", command=self.arm_media_browser,
-                  bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
-        tk.Button(media_row, text="Type a song", command=self.type_media_song,
-                  bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
         seq_row = tk.Frame(root, bg="#1a1a1a")
         seq_row.pack(fill="x", padx=20, pady=4)
-        tk.Button(seq_row, text="Record click in Chrome", command=self.record_media_click,
-                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
-        tk.Button(seq_row, text="Add typed text", command=self.add_media_text,
-                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
-        tk.Button(seq_row, text="Add key", command=self.add_media_key,
-                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
-        tk.Button(seq_row, text="Save sequence", command=self.save_media_sequence,
-                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
-        tk.Button(seq_row, text="Run sequence", command=self.run_media_sequence,
-                  bg="#1db954", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
+        for label, part in (
+            ("Record search field", "search_field"),
+            ("Record search button", "search_button"),
+            ("Record results area", "results"),
+            ("Record a result", "result"),
+            ("Record download", "download"),
+            ("Record next step", "extra"),
+        ):
+            tk.Button(seq_row, text=label, command=lambda part=part: self.record_media_part(part),
+                      bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=3)
+        tk.Button(seq_row, text="Clear recording", command=self.clear_media_recording,
+                  bg="#c45c4a", fg="white", relief="flat", padx=8).pack(side="left", padx=3)
 
         # Status / process log
         tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
@@ -159,47 +157,21 @@ class MusicStreamApp:
         self.log_message("Opening a separate Chrome window. Your mouse will not be taken over.")
         self.post_local("/api/media-browser/open", {"url": self.media_url.get().strip()})
 
-    def arm_media_browser(self):
-        self.log_message("Click the search box in the media Chrome window now.")
-        self.post_local("/api/media-browser/arm")
+    def record_media_part(self, part):
+        labels = {
+            "search_field": "Click the search field in the media Chrome window.",
+            "search_button": "Click the search button in the media Chrome window.",
+            "results": "Click the results area in the media Chrome window.",
+            "result": "Click one search result in the media Chrome window.",
+            "download": "Click the download button in the media Chrome window.",
+            "extra": "Click the next step in the media Chrome window.",
+        }
+        self.log_message(labels.get(part, "Click in the media Chrome window."))
+        self.post_local("/api/media-browser/record", {"part": part})
 
-    def type_media_song(self):
-        title = simpledialog.askstring("Type a song", "Song title", parent=self.root)
-        if not title:
-            return
-        artist = simpledialog.askstring("Type a song", "Artist", parent=self.root) or ""
-        self.log_message(f"Typing a cleaned search for {title}.")
-        self.post_local("/api/media-browser/search", {"title": title, "artist": artist, "delay": "1.5"})
-
-    def record_media_click(self):
-        self.log_message("Click inside the media Chrome window. This remembers the control, not a screen coordinate.")
-        self.post_local("/api/media-browser/sequence/click")
-
-    def add_media_text(self):
-        text = simpledialog.askstring("Typed text", "Text to type. {query} becomes the song.", parent=self.root)
-        if not text:
-            return
-        self.post_local("/api/media-browser/sequence/step", {"action": "type", "text": text})
-
-    def add_media_key(self):
-        key = simpledialog.askstring("Key", "Key name, such as Enter or Tab", parent=self.root) or ""
-        if not key:
-            return
-        self.post_local("/api/media-browser/sequence/step", {"action": "key", "key": key})
-
-    def save_media_sequence(self):
-        name = simpledialog.askstring("Save sequence", "Sequence name", parent=self.root) or ""
-        if not name:
-            return
-        self.post_local("/api/media-browser/sequence/save", {"name": name})
-
-    def run_media_sequence(self):
-        name = simpledialog.askstring("Run sequence", "Sequence name", parent=self.root) or ""
-        if not name:
-            return
-        title = simpledialog.askstring("Run sequence", "Song title", parent=self.root) or ""
-        artist = simpledialog.askstring("Run sequence", "Artist", parent=self.root) or ""
-        self.post_local("/api/media-browser/sequence/run", {"name": name, "title": title, "artist": artist})
+    def clear_media_recording(self):
+        self.log_message("Recording cleared.")
+        self.post_local("/api/media-browser/clear")
 
     def log_message(self, msg):
         self.log.insert("end", msg + "\n")
