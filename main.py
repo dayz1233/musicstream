@@ -476,6 +476,38 @@ def record_mouse_position(label: str = "position"):
     except Exception as e:
         raise HTTPException(500, str(e))
 
+from automation.media_browser import media_browser
+
+
+@app.get("/api/media-browser")
+def media_browser_status():
+    return media_browser.call("status", timeout=15)
+
+
+@app.post("/api/media-browser/open")
+def media_browser_open(url: str = ""):
+    result = media_browser.call("open", {"url": url}, timeout=60)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Could not open the media browser")
+    return result
+
+
+@app.post("/api/media-browser/arm")
+def media_browser_arm():
+    result = media_browser.call("arm", timeout=90)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "The search box was not selected")
+    return result
+
+
+@app.post("/api/media-browser/search")
+def media_browser_search(title: str, artist: str = "", delay: float = 1.5):
+    result = media_browser.call("search", {"title": title, "artist": artist, "delay": delay}, timeout=120)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Search failed")
+    return result
+
+
 @app.post("/api/verify-playlist")
 def verify_against_playlist(track_title: str, artist: str, playlist_file: Optional[str] = None):
     """Verify a track against a Spotify recommendation playlist file (JSON/CSV)."""
