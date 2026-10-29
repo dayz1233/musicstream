@@ -198,6 +198,11 @@ class ClickSteps:
         if not text:
             return
         with self.lock:
+            if self.steps and self.steps[-1].get("action") == "type":
+                self.steps[-1]["text"] = (self.steps[-1].get("text") or "") + text
+                self.steps[-1]["search"] = True
+                self.steps[-1]["t"] = time.time()
+                return
             self.steps.append({"action": "type", "text": text, "search": search, "t": time.time()})
 
     def replay(self, query: str, delay: float = 0.8) -> dict:
