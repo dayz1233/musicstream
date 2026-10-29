@@ -124,6 +124,7 @@ class MusicStreamApp:
         self.media_seen = 0
         self.root.after(800, self.start_server)
         self.root.after(2000, self.schedule_updates)
+        self.root.after(3000, self.poll_media_steps)
 
     def post_local(self, path, query=None):
         def work():
@@ -162,7 +163,11 @@ class MusicStreamApp:
             for step in fresh:
                 line = f"Step {step.get('step')}: {step.get('action')}"
                 self.root.after(0, lambda line=line: self.log_message(line))
-            if data.get("recording"):
+            message = " ".join(part for part in (data.get("message"), data.get("next")) if part)
+            if message and message != getattr(self, "media_message", ""):
+                self.media_message = message
+                self.root.after(0, lambda message=message: self.log_message(message))
+            if data.get("recording") or data.get("message"):
                 self.root.after(500, self.poll_media_steps)
         threading.Thread(target=work, daemon=True).start()
 
