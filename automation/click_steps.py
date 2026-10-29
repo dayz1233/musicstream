@@ -139,6 +139,7 @@ class ClickSteps:
         self.delay = 0.8
         self.gaps = dict(DEFAULT_GAPS)
         self.traffic = TrafficWatch()
+        self.abort = False
         self._load()
 
     def _load(self):
@@ -194,7 +195,10 @@ class ClickSteps:
             label = step.get("key") or "key"
         else:
             label = "click"
-        return {"step": number, "action": label}
+        name = (step.get("name") or "").strip()
+        if name:
+            label = name
+        return {"step": number, "action": label, "kind": step.get("action") or "click", "wait": round(float(step.get("wait", 0.4)), 2), "name": name}
 
     def note(self, message: str, nxt: str = ""):
         with self.lock:
@@ -231,6 +235,77 @@ class ClickSteps:
     def gap_for(self, action: str) -> float:
         with self.lock:
             return float(self.gaps.get(action, DEFAULT_GAPS.get(action, 0.4)))
+
+    def _add_step(self, step):
+        step["t"] = time.time()
+        step.setdefault("name", "")
+        step.setdefault("wait", 0.4)
+        if self.steps:
+            previous = self.steps[-1]
+            previous["wait"] = round(max(0.0, step["t"] - float(previous.get("t") or step["t"])), 2)
+        self.steps.append(step)
+
+    def edit_steps(self, indexes, wait=None, name=None) -> dict:
+        updated = 0
+        try:
+            chosen = [int(part) for part in str(indexes or "").split(",") if part.strip()]
+        except ValueError:
+            return {"ok": False, "error": "Select steps from the list."}
+        new_wait = None
+        if wait not in (None, ""):
+            try:
+                new_wait = min(120.0, max(0.0, float(wait)))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "Enter a number of seconds."}
+        with self.lock:
+            for number in chosen:
+                if number < 1 or number > len(self.steps):
+                    continue
+                step = self.steps[number - 1]
+                if new_wait is not None:
+                    step["wait"] = new_wait
+                if name:
+                    step["name"] = str(name).strip()
+                updated += 1
+        if not updated:
+            return {"ok": False, "error": "Select one or more steps first."}
+        self._save()
+        self.note(f"Updated {updated} steps.", "")
+        return self.status()
+
+    def estop(self) -> dict:
+        self.abort = True
+        if self.recording:
+            self.stop()
+        self.close_window()
+        self.note("E-stop. Recording and playback are stopped.", "")
+        return self.status()
+
+    def start_test(self, query: str) -> dict:
+        if self.recording:
+            self.stop()
+        self.abort = False
+        self.note("Test started.", "Press E-stop to stop it.")
+
+        def run():
+            result = self.replay((query or "").strip() or "test")
+            if self.abort:
+                return
+            if result.get("ok"):
+                self.note("Test finished. The window is still open.", "Press E-stop to close it.")
+            else:
+                self.note(result.get("error") or "The test did not finish.", "")
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True, "message": "Test started."}
+
+    def _pause(self, seconds: float) -> bool:
+        deadline = time.time() + max(0.0, float(seconds))
+        while time.time() < deadline:
+            if self.abort:
+                return False
+            time.sleep(0.05)
+        return not self.abort
 
     def _hwnds(self):
         if sys.platform != "win32":
@@ -311,7 +386,8 @@ class ClickSteps:
         self._hwnd = None
         if hwnd and sys.platform == "win32":
             ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)
-        self.note("The download finished.", "The media Chrome window is closing.")
+        if not self.abort:
+            self.note("The download finished.", "The media Chrome window is closing.")
 
     def open_chrome(self, url: str) -> dict:
         url = (url or "").strip()
@@ -335,6 +411,8 @@ class ClickSteps:
         except ImportError:
             return {"ok": False, "error": "pynput is not installed yet. Restart MusicStream so it can install."}
         self.recording = True
+        self.abort = False
+        self.note("RECORDING. Click through the site. Press Stop when you are done.", "")
         self._mouse = mouse.Listener(on_click=self._on_click, on_scroll=self._on_scroll)
         self._keys = keyboard.Listener(on_press=self._on_key)
         self._mouse.start()
@@ -369,7 +447,7 @@ class ClickSteps:
             return
         self._flush_typing()
         with self.lock:
-            self.steps.append({"action": "click", "x": int(x), "y": int(y), "t": time.time()})
+            self._add_step({"action": "click", "x": int(x), "y": int(y)})
             count = len(self.steps)
         self.note(f"Recorded step {count}: click.", "I think you are clicking through the site. Do the next action, or press Stop.")
 
@@ -383,7 +461,7 @@ class ClickSteps:
                 self.steps[-1]["dy"] = int(self.steps[-1].get("dy", 0)) + int(dy)
                 self.steps[-1]["t"] = now
                 return
-            self.steps.append({"action": "scroll", "x": int(x), "y": int(y), "dy": int(dy), "t": now})
+            self._add_step({"action": "scroll", "x": int(x), "y": int(y), "dy": int(dy)})
             count = len(self.steps)
         self.note(f"Recorded step {count}: scroll.", "I think you are lining the page up. Do the next action, or press Stop.")
 
@@ -394,12 +472,12 @@ class ClickSteps:
         if key == Key.enter:
             self._flush_typing()
             with self.lock:
-                self.steps.append({"action": "key", "key": "enter", "t": time.time()})
+                self._add_step({"action": "key", "key": "enter"})
             return
         if key == Key.tab:
             self._flush_typing()
             with self.lock:
-                self.steps.append({"action": "key", "key": "tab", "t": time.time()})
+                self._add_step({"action": "key", "key": "tab"})
             return
         if key == Key.backspace:
             self._typing = self._typing[:-1]
@@ -436,7 +514,10 @@ class ClickSteps:
                 self.steps[-1]["search"] = True
                 self.steps[-1]["t"] = time.time()
                 return
-            self.steps.append({"action": "type", "text": text, "search": search, "t": time.time()})
+            self.steps.append({"action": "type", "text": text, "search": search, "t": time.time(), "name": "", "wait": 0.4})
+            if len(self.steps) >= 2:
+                previous = self.steps[-2]
+                previous["wait"] = round(max(0.0, self.steps[-1]["t"] - float(previous.get("t") or self.steps[-1]["t"])), 2)
         self.note("Recorded typing in the search bar." if search else "Recorded typing.", "Next action will be counted as the following step.")
 
     def replay(self, query: str, delay: float = None) -> dict:
@@ -456,9 +537,12 @@ class ClickSteps:
             return {"ok": False, "error": str(exc)}
         labels = [self._public_step(index, step)["action"] for index, step in enumerate(steps, start=1)]
         self.note("Opening a fresh Chrome window on the site.", f"Next: {labels[0]}.")
+        self.abort = False
         self.traffic.start()
         self._launch(self.url)
-        time.sleep(self.gap_for("open"))
+        if not self._pause(self.gap_for("open")):
+            self.close_window()
+            return {"ok": False, "error": "E-stop"}
         query = (query or "").strip()
         typer = Controller()
         pyautogui.FAILSAFE = True
@@ -466,6 +550,10 @@ class ClickSteps:
         for index, step in enumerate(steps):
             upcoming = labels[index + 1] if index + 1 < len(labels) else "watch the Downloads folder, then close Chrome"
             self.note(f"Doing step {index + 1} of {len(steps)}: {labels[index]}.", f"Next: {upcoming}.")
+            if self.abort:
+                self.note("E-stop.", "Stopped.")
+                self.close_window()
+                return {"ok": False, "error": "E-stop"}
             if self.idle():
                 self.note("The page stopped doing anything besides background traffic.", "Closing this window and trying again.")
                 return {"ok": False, "retry": True, "error": "The page went idle."}
@@ -483,7 +571,10 @@ class ClickSteps:
                 typer.type(text)
             elif action == "key":
                 pyautogui.press(step.get("key") or "enter")
-            time.sleep(self.gap_for(action if action in DEFAULT_GAPS else "click"))
+            if not self._pause(step.get("wait", 0.4)):
+                self.note("E-stop.", "Stopped.")
+                self.close_window()
+                return {"ok": False, "error": "E-stop"}
         self.note("The clicks are finished.", "Next: wait until the file finishes in Downloads, then close Chrome.")
         return {"ok": True, "played": len(steps)}
 
