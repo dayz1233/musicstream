@@ -45,8 +45,25 @@ class MusicStreamApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MusicStream Desktop")
-        self.root.geometry("980x860")
+        self.root.geometry("1000x720")
         self.root.configure(bg="#1a1a1a")
+        shell = tk.Canvas(self.root, bg="#1a1a1a", highlightthickness=0)
+        bar = tk.Scrollbar(self.root, orient="vertical", command=shell.yview)
+        shell.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        shell.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(shell, bg="#1a1a1a")
+        body_id = shell.create_window((0, 0), window=body, anchor="nw")
+        shell.bind("<Configure>", lambda event: shell.itemconfig(body_id, width=event.width))
+        body.bind("<Configure>", lambda _event: shell.configure(scrollregion=shell.bbox("all")))
+
+        def wheel(event):
+            if event.widget in (getattr(self, "log", None), getattr(self, "step_list", None)):
+                return
+            shell.yview_scroll(int(-event.delta / 120) or (-1 if event.delta > 0 else 1), "units")
+
+        self.root.bind_all("<MouseWheel>", wheel)
+        root = body
 
         # Header
         header = tk.Label(root, text="MusicStream", font=("Segoe UI", 20, "bold"),
