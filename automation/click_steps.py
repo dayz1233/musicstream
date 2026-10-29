@@ -137,6 +137,7 @@ class ClickSteps:
         self.message = ""
         self.next_message = ""
         self.delay = 0.8
+        self.gaps = dict(DEFAULT_GAPS)
         self.traffic = TrafficWatch()
         self._load()
 
@@ -153,10 +154,19 @@ class ClickSteps:
             self.delay = min(30.0, max(0.0, float(data.get("delay", 0.8))))
         except (TypeError, ValueError):
             self.delay = 0.8
+        saved = data.get("gaps") or {}
+        if not saved and data.get("delay") is not None:
+            saved = {"click": self.delay, "scroll": self.delay, "type": self.delay, "key": self.delay}
+        for name, default in DEFAULT_GAPS.items():
+            try:
+                limit = 600.0 if name == "download" else 30.0
+                self.gaps[name] = min(limit, max(0.0, float(saved.get(name, default))))
+            except (TypeError, ValueError):
+                self.gaps[name] = default
 
     def _save(self):
         CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG.write_text(json.dumps({"url": self.url, "steps": self.steps, "delay": self.delay}, indent=2), encoding="utf-8")
+        CONFIG.write_text(json.dumps({"url": self.url, "steps": self.steps, "delay": self.delay, "gaps": self.gaps}, indent=2), encoding="utf-8")
 
     def status(self) -> dict:
         with self.lock:
@@ -168,6 +178,7 @@ class ClickSteps:
                 "message": self.message,
                 "next": self.next_message,
                 "delay": self.delay,
+                "gaps": dict(self.gaps),
             }
 
     def _public_step(self, number, step) -> dict:
@@ -200,6 +211,26 @@ class ClickSteps:
         self._save()
         self.note(f"Wait between actions is {seconds:g} seconds.", "")
         return self.status()
+
+    def set_gap(self, action: str, seconds: float) -> dict:
+        action = (action or "").strip().lower()
+        if action not in DEFAULT_GAPS:
+            return {"ok": False, "error": "Unknown action."}
+        try:
+            seconds = float(seconds)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Enter a number of seconds."}
+        limit = 600.0 if action == "download" else 30.0
+        seconds = min(limit, max(0.0, seconds))
+        with self.lock:
+            self.gaps[action] = seconds
+        self._save()
+        self.note(f"{action} wait is {seconds:g} seconds.", "")
+        return self.status()
+
+    def gap_for(self, action: str) -> float:
+        with self.lock:
+            return float(self.gaps.get(action, DEFAULT_GAPS.get(action, 0.4)))
 
     def _hwnds(self):
         if sys.platform != "win32":
@@ -427,7 +458,7 @@ class ClickSteps:
         self.note("Opening a fresh Chrome window on the site.", f"Next: {labels[0]}.")
         self.traffic.start()
         self._launch(self.url)
-        time.sleep(max(1.5, delay))
+        time.sleep(self.gap_for("open"))
         query = (query or "").strip()
         typer = Controller()
         pyautogui.FAILSAFE = True
@@ -452,7 +483,7 @@ class ClickSteps:
                 typer.type(text)
             elif action == "key":
                 pyautogui.press(step.get("key") or "enter")
-            time.sleep(max(0.2, delay))
+            time.sleep(self.gap_for(action if action in DEFAULT_GAPS else "click"))
         self.note("The clicks are finished.", "Next: wait until the file finishes in Downloads, then close Chrome.")
         return {"ok": True, "played": len(steps)}
 
