@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MusicStream</title>
+<style>
+:root {
+  --bg: #121212;
+  --bg-elevated: #181818;
+  --bg-highlight: #282828;
+  --text: #ffffff;
+  --text-sub: #b3b3b3;
+  --accent: #1db954;
+  --accent-hover: #1ed760;
+  --border: #282828;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+#app { display: flex; flex: 1; overflow: hidden; }
+#sidebar {
+  width: 240px;
+  background: #000;
+  padding: 16px 12px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+#sidebar h2 { font-size: 14px; margin: 16px 8px 8px; color: var(--text-sub); text-transform: uppercase; letter-spacing: 1px; }
+.nav-item {
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-sub);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+}
+.nav-item:hover, .nav-item.active { background: var(--bg-highlight); color: var(--text); }
+#main { flex: 1; overflow-y: auto; padding: 20px 24px 120px; background: linear-gradient(180deg, #1a1a1a 0%, #121212 200px); }
+.section-title { font-size: 24px; font-weight: 700; margin: 24px 0 16px; }
+.carousel { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 8px; }
+.carousel::-webkit-scrollbar { height: 6px; }
+.card {
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 180px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.card:hover { background: var(--bg-highlight); }
+.card-img {
+  width: 100%;
+  aspect-ratio: 1;
+  background: #333;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  color: #555;
+}
+.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card p { font-size: 13px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-list { width: 100%; }
+.track-row {
+  display: grid;
+  grid-template-columns: 40px 1fr 180px 80px 40px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  align-items: center;
+  cursor: pointer;
+  font-size: 14px;
+}
+.track-row:hover { background: var(--bg-highlight); }
+.track-row .title { font-weight: 500; }
+.track-row .artist { color: var(--text-sub); font-size: 13px; }
+#player {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 90px;
+  background: #181818;
+  border-top: 1px solid #282828;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 100;
+}
+#now-playing { flex: 1; min-width: 0; }
+#now-playing .title { font-weight: 600; font-size: 14px; }
+#now-playing .artist { font-size: 12px; color: var(--text-sub); }
+#controls { display: flex; align-items: center; gap: 16px; }
+.ctrl-btn {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 20px;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ctrl-btn:hover { background: var(--bg-highlight); }
+.ctrl-btn.play { background: var(--text); color: #000; font-size: 16px; }
+#progress-container { flex: 1; display: flex; align-items: center; gap: 8px; }
+#progress-bar {
+  flex: 1;
+  height: 4px;
+  background: #4d4d4d;
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+}
+#progress-fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0%; }
+#time { font-size: 11px; color: var(--text-sub); min-width: 40px; text-align: center; }
+#upload-area {
+  border: 2px dashed #444;
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  margin: 20px 0;
+  cursor: pointer;
+}
+#upload-area:hover { border-color: var(--accent); }
+input[type="file"] { display: none; }
+.search-bar {
+  background: #242424;
+  border: none;
+  border-radius: 20px;
+  padding: 10px 16px;
+  color: white;
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+@media (max-width: 768px) {
+  #sidebar { display: none; }
+  #main { padding: 12px 12px 110px; }
+  .track-row { grid-template-columns: 32px 1fr 60px; }
+  .track-row .album, .track-row .duration { display: none; }
+  #player { height: 80px; padding: 0 8px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div class="nav-item active" onclick="showHome()">🏠 Home</div>
+    <div class="nav-item" onclick="showSearch()">🔍 Search</div>
+    <div class="nav-item" onclick="showLibrary()">📚 Library</div>
+    <h2>Categories</h2>
+    <div id="genre-list"></div>
+    <div class="nav-item" onclick="showPresets()">⚡ Presets & Server</div>
+    <div class="nav-item" onclick="showUpload()">⬆️ Upload Music</div>
+  </div>
+  <div id="main">
+    <div id="content"></div>
+  </div>
+</div>
+<div id="player">
+  <div id="now-playing">
+    <div class="title">Nothing playing</div>
+    <div class="artist">—</div>
+  </div>
+  <div id="controls">
+    <button class="ctrl-btn" onclick="prevTrack()">⏮</button>
+    <button class="ctrl-btn play" id="play-btn" onclick="togglePlay()">▶</button>
+    <button class="ctrl-btn" onclick="nextTrack()">⏭</button>
+  </div>
+  <div id="progress-container">
+    <span id="time-current">0:00</span>
+    <div id="progress-bar" onclick="seek(event)">
+      <div id="progress-fill"></div>
+    </div>
+    <span id="time-total">0:00</span>
+  </div>
+  <audio id="audio" preload="none"></audio>
+</div>
+
+<script>
+const API = '';
+let currentTrack = null;
+let queue = [];
+let queueIndex = -1;
+let isPlaying = false;
+const audio = document.getElementById('audio');
+
+function formatTime(sec) {
+  if (!sec || isNaN(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+
+async function showHome() {
+  setActive('Home');
+  const data = await fetchJSON('/api/recommendations');
+  let html = `<h1 class="section-title">Made for you</h1><div class="carousel">`;
+  data.for_you.slice(0, 10).forEach(t => {
+    html += cardHTML(t);
+  });
+  html += `</div><h1 class="section-title">Recently Added</h1><div class="carousel">`;
+  data.recently_added.forEach(t => {
+    html += cardHTML(t);
+  });
+  html += `</div>`;
+  document.getElementById('content').innerHTML = html;
+  loadGenres();
+}
+
+function cardHTML(t) {
+  return `<div class="card" onclick="playTrack(${t.id}, '${escape(t.title)}', '${escape(t.artist)}')">
+    <div class="card-img">🎵</div>
+    <h3>${t.title}</h3>
+    <p>${t.artist}</p>
+  </div>`;
+}
+
+function escape(s) { return (s||'').replace(/'/g, "\\'"); }
+
+async function showSearch() {
+  setActive('Search');
+  document.getElementById('content').innerHTML = `
+    <input class="search-bar" placeholder="Search songs, artists, albums..." oninput="doSearch(this.value)">
+    <div id="search-results"></div>
+  `;
+}
+
+async function doSearch(q) {
+  if (q.length < 2) return;
+  const tracks = await fetchJSON(`/api/search?q=${encodeURIComponent(q)}`);
+  let html = `<div class="track-list">`;
+  tracks.forEach((t, i) => {
+    html += trackRow(t, i);
+  });
+  html += `</div>`;
+  document.getElementById('search-results').innerHTML = html || '<p>No results</p>';
+}
+
+function trackRow(t, idx) {
+  return `<div class="track-row" onclick="playTrack(${t.id}, '${escape(t.title)}', '${escape(t.artist)}')">
+    <span>${idx+1}</span>
+    <div><div class="title">${t.title}</div><div class="artist">${t.artist}</div></div>
+    <div class="album">${t.album || ''}</div>
+    <div class="duration">${formatTime(t.duration)}</div>
+    <span>▶</span>
+  </div>`;
+}
+
+async function showLibrary() {
+  setActive('Library');
+  const tracks = await fetchJSON('/api/tracks?limit=200');
+  let html = `<h1 class="section-title">Your Library</h1><div class="track-list">`;
+  tracks.forEach((t, i) => { html += trackRow(t, i); });
+  html += `</div>`;
+  document.getElementById('content').innerHTML = html;
+}
+
+async function showGenre(genre) {
+  const tracks = await fetchJSON(`/api/tracks?genre=${encodeURIComponent(genre)}&limit=100`);
+  let html = `<h1 class="section-title">${genre}</h1><div class="track-list">`;
+  tracks.forEach((t, i) => { html += trackRow(t, i); });
+  html += `</div>`;
+  document.getElementById('content').innerHTML = html;
+}
+
+async function loadGenres() {
+  const genres = await fetchJSON('/api/genres');
+  const el = document.getElementById('genre-list');
+  el.innerHTML = genres.map(g => 
+    `<div class="nav-item" onclick="showGenre('${escape(g)}')">${g}</div>`
+  ).join('');
+}
+
+async function showPresets() {
+  setActive('Presets');
+  const presets = await fetchJSON('/api/presets');
+  const sequences = await fetchJSON('/api/automation/sequences');
+  let html = `<h1 class="section-title">Pre-set Actions & Automation</h1>
+    <p style="color:var(--text-sub);margin-bottom:16px">Your media server has no API. Use recorded click sequences to search it automatically.</p>
+    <div style="margin-bottom:20px">
+      <input class="search-bar" id="seq-name" placeholder="Sequence name (e.g. search_server)">
+      <button onclick="startRecording()" style="background:#444;color:#fff;border:none;padding:8px 16px;border-radius:20px;margin-right:8px">Record Position</button>
+      <button onclick="saveSequence()" style="background:var(--accent);color:#000;border:none;padding:8px 16px;border-radius:20px;font-weight:600">Save Sequence</button>
+    </div>
+    <div id="recorded-steps" style="background:#1a1a1a;padding:12px;border-radius:8px;margin-bottom:20px;font-family:monospace;font-size:13px;min-height:40px">No steps recorded yet</div>
+    <h3 style="margin:16px 0 8px">Saved Sequences</h3>
+    <div id="sequence-list">`;
+  sequences.forEach(s => {
+    html += `<div class="track-row">
+      <span>⚡</span>
+      <div><div class="title">${s}</div><div class="artist">Automation sequence</div></div>
+      <div></div><div></div>
+      <span onclick="runSequence('${escape(s)}')">▶ Run</span>
+    </div>`;
+  });
+  html += `</div>
+    <h2 class="section-title" style="margin-top:32px">Search via Automation + Validate</h2>
+    <input class="search-bar" id="auto-query" placeholder="Search term for media server...">
+    <input class="search-bar" id="expected-title" placeholder="Expected title">
+    <input class="search-bar" id="expected-artist" placeholder="Expected artist">
+    <input class="search-bar" id="expected-duration" placeholder="Expected length (seconds)" type="number" step="0.1">
+    <label style="color:var(--text-sub);font-size:13px;display:block;margin:8px 0">
+      Extra delay for slow site (seconds): 
+      <input id="extra-delay" type="number" value="1.5" step="0.5" style="width:60px;background:#242424;color:#fff;border:none;padding:4px;border-radius:4px">
+    </label>
+    <select id="auto-sequence" style="background:#242424;color:#fff;border:none;padding:10px;border-radius:20px;margin:8px 0">
+      ${sequences.map(s => `<option value="${s}">${s}</option>`).join('')}
+    </select>
+    <button onclick="runWithQueryAndValidate()" style="background:var(--accent);color:#000;border:none;padding:10px 20px;border-radius:20px;font-weight:600;margin-left:8px">Query & Validate Download</button>
+    <div id="validation-result" style="margin-top:16px;background:#1a1a1a;padding:12px;border-radius:8px;font-size:13px;white-space:pre-wrap"></div>
+    <p style="color:var(--text-sub);margin-top:16px;font-size:13px">Supports zip, OPUS, FLAC, MP3, etc. Increase delay if the site is slow. Media server must be in the foreground.</p>`;
+  document.getElementById('content').innerHTML = html;
+}
+
+let recordedSteps = [];
+
+async function startRecording() {
+  const label = prompt("Label for this click position (e.g. search_box):") || "position";
+  document.getElementById('recorded-steps').textContent = "Move mouse to target in 3 seconds...";
+  const res = await fetch(`/api/automation/record-position?label=${encodeURIComponent(label)}`);
+  const data = await res.json();
+  recordedSteps.push({action: "click", x: data.x, y: data.y});
+  document.getElementById('recorded-steps').textContent = JSON.stringify(recordedSteps, null, 2);
+}
+
+async function saveSequence() {
+  const name = document.getElementById('seq-name').value;
+  if (!name || recordedSteps.length === 0) return alert("Name and at least one step required");
+  // Add a type_query step at the end if not present
+  if (!recordedSteps.some(s => s.action === "type_query")) {
+    recordedSteps.push({action: "type_query"});
+    recordedSteps.push({action: "hotkey", keys: ["enter"]});
+  }
+  await fetch("/api/automation/sequence", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name, steps: recordedSteps})
+  });
+  recordedSteps = [];
+  showPresets();
+}
+
+async function runSequence(name) {
+  await fetch(`/api/automation/run?name=${encodeURIComponent(name)}`, {method: "POST"});
+  alert("Sequence started. Keep media server in foreground.");
+}
+
+async function runWithQueryAndValidate() {
+  const name = document.getElementById('auto-sequence').value;
+  const query = document.getElementById('auto-query').value;
+  const title = document.getElementById('expected-title').value;
+  const artist = document.getElementById('expected-artist').value;
+  const duration = document.getElementById('expected-duration').value;
+  const delay = document.getElementById('extra-delay').value || 1.5;
+  if (!name || !query) return alert("Sequence and search term required");
+  
+  document.getElementById('validation-result').textContent = "Running automation and waiting for download...";
+  const params = new URLSearchParams({
+    sequence: name,
+    query: query,
+    extra_delay: delay,
+  });
+  if (title) params.append("expected_title", title);
+  if (artist) params.append("expected_artist", artist);
+  if (duration) params.append("expected_duration", duration);
+  
+  const res = await fetch(`/api/query-and-validate?${params}`, {method: "POST"});
+  const data = await res.json();
+  document.getElementById('validation-result').textContent = JSON.stringify(data, null, 2);
+}
+  setActive('Presets');
+  const presets = await fetchJSON('/api/presets');
+  let html = `<h1 class="section-title">Pre-set Actions</h1>
+    <div style="margin-bottom:20px">
+      <input class="search-bar" id="preset-name" placeholder="Preset name">
+      <input class="search-bar" id="preset-query" placeholder="Search query for server">
+      <button onclick="savePreset()" style="background:var(--accent);color:#000;border:none;padding:8px 16px;border-radius:20px;font-weight:600">Save Preset</button>
+    </div>
+    <div id="preset-list">`;
+  presets.forEach(p => {
+    html += `<div class="track-row" onclick="runPreset('${escape(p.query)}')">
+      <span>⚡</span>
+      <div><div class="title">${p.name}</div><div class="artist">${p.query}</div></div>
+      <div></div><div></div><span>▶</span>
+    </div>`;
+  });
+  html += `</div>
+    <h2 class="section-title" style="margin-top:32px">Query Your Media Server</h2>
+    <input class="search-bar" id="server-query" placeholder="Search your media server..." oninput="queryServer(this.value)">
+    <div id="server-results"></div>
+    <p style="color:var(--text-sub);margin-top:16px;font-size:13px">Phone searches can hit /api/search-from-phone. Desktop can display results here for verification against your Spotify playlist file.</p>`;
+  document.getElementById('content').innerHTML = html;
+}
+
+async function savePreset() {
+  const name = document.getElementById('preset-name').value;
+  const query = document.getElementById('preset-query').value;
+  if (!name || !query) return;
+  await fetch(`/api/presets?name=${encodeURIComponent(name)}&query=${encodeURIComponent(query)}`, {method:'POST'});
+  showPresets();
+}
+
+async function queryServer(q) {
+  if (q.length < 2) return;
+  const data = await fetchJSON(`/api/query-server?query=${encodeURIComponent(q)}`);
+  let html = `<div class="track-list">`;
+  data.results.forEach((r, i) => {
+    html += `<div class="track-row">
+      <span>${i+1}</span>
+      <div><div class="title">${r.title}</div><div class="artist">${r.artist}</div></div>
+      <div>${r.path}</div>
+      <div></div>
+      <span onclick="verifyTrack('${escape(r.title)}','${escape(r.artist)}')">✓</span>
+    </div>`;
+  });
+  html += `</div>`;
+  document.getElementById('server-results').innerHTML = html;
+}
+
+async function verifyTrack(title, artist) {
+  const res = await fetch(`/api/verify-playlist?track_title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`);
+  const data = await res.json();
+  alert(data.message + '\n' + data.track);
+}
+
+async function runPreset(query) {
+  document.getElementById('server-query').value = query;
+  queryServer(query);
+}
+  document.getElementById('content').innerHTML = `
+    <h1 class="section-title">Upload Music</h1>
+    <div id="upload-area" onclick="document.getElementById('file-input').click()">
+      <p>Click or drag files here to upload (MP3, FLAC, etc.)</p>
+      <input type="file" id="file-input" multiple accept="audio/*" onchange="uploadFiles(this.files)">
+    </div>
+    <p id="upload-status"></p>
+  `;
+}
+
+async function uploadFiles(files) {
+  const form = new FormData();
+  for (let f of files) form.append('files', f);
+  document.getElementById('upload-status').textContent = 'Uploading...';
+  const r = await fetch('/api/upload', { method: 'POST', body: form });
+  const data = await r.json();
+  document.getElementById('upload-status').textContent = `Uploaded ${data.count} tracks. Refreshing...`;
+  setTimeout(() => showHome(), 1000);
+}
+
+function setActive(name) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  // simple
+}
+
+async function playTrack(id, title, artist) {
+  currentTrack = { id, title, artist };
+  document.querySelector('#now-playing .title').textContent = title;
+  document.querySelector('#now-playing .artist').textContent = artist;
+  audio.src = `/api/stream/${id}`;
+  audio.play();
+  isPlaying = true;
+  document.getElementById('play-btn').textContent = '⏸';
+  await fetch(`/api/play/${id}`, { method: 'POST' });
+}
+
+function togglePlay() {
+  if (!currentTrack) return;
+  if (audio.paused) {
+    audio.play();
+    document.getElementById('play-btn').textContent = '⏸';
+  } else {
+    audio.pause();
+    document.getElementById('play-btn').textContent = '▶';
+  }
+}
+
+audio.ontimeupdate = () => {
+  const pct = (audio.currentTime / audio.duration) * 100 || 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('time-current').textContent = formatTime(audio.currentTime);
+  document.getElementById('time-total').textContent = formatTime(audio.duration);
+};
+
+function seek(e) {
+  const bar = document.getElementById('progress-bar');
+  const rect = bar.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  audio.currentTime = pct * audio.duration;
+}
+
+function nextTrack() { /* queue later */ }
+function prevTrack() { /* queue later */ }
+
+// Add near top of script
+let ws;
+function connectControls() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/controls`);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'control') {
+      if (msg.action === 'play') audio.play();
+      if (msg.action === 'pause') audio.pause();
+      if (msg.action === 'seek' && msg.payload) audio.currentTime = msg.payload.time;
+    }
+  };
+}
+connectControls();
+
+function sendControl(action, payload = {}) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({action, payload}));
+}
+
+// Update play/pause to broadcast
+function togglePlay() {
+  if (!currentTrack) return;
+  if (audio.paused) {
+    audio.play();
+    document.getElementById('play-btn').textContent = '⏸';
+    sendControl('play');
+  } else {
+    audio.pause();
+    document.getElementById('play-btn').textContent = '▶';
+    sendControl('pause');
+  }
+}
+
+// Autofill for search
+async function setupAutofill() {
+  const input = document.querySelector('.search-bar');
+  if (!input) return;
+  input.addEventListener('input', async (e) => {
+    const q = e.target.value;
+    if (q.length < 1) return;
+    const suggestions = await fetchJSON(`/api/autofill?q=${encodeURIComponent(q)}`);
+    // Simple datalist
+    let dl = document.getElementById('autofill-list');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'autofill-list';
+      document.body.appendChild(dl);
+      input.setAttribute('list', 'autofill-list');
+    }
+    dl.innerHTML = suggestions.map(s => `<option value="${s.label}" data-id="${s.id}">`).join('');
+  });
+}
+// Call after content load
+setTimeout(setupAutofill, 500);
+</script>
+</body>
+</html>

@@ -1,0 +1,570 @@
+import os
+import json
+import sqlite3
+from pathlib import Path
+from typing import List, Optional
+from datetime import datetime
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets
+from typing import Dict, Set
+
+# ... (keep existing imports and models)
+
+# Simple password auth (change PASSWORD in env or here)
+PASSWORD = os.getenv("MUSICSTREAM_PASSWORD", "changeme")
+security = HTTPBasic()
+
+def get_current_user(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = secrets.compare_digest(credentials.username, "admin")
+    correct_password = secrets.compare_digest(credentials.password, PASSWORD)
+    if not (correct_username and correct_password):
+        raise HTTPException(status_code=401, detail="Incorrect credentials", headers={"WWW-Authenticate": "Basic"})
+    return credentials.username
+
+# WebSocket connection manager for cross-device controls
+class ConnectionManager:
+    def __init__(self):
+        self.active: Set[WebSocket] = set()
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active.add(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active.discard(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in list(self.active):
+            try:
+                await connection.send_json(message)
+            except:
+                self.disconnect(connection)
+
+manager = ConnectionManager()
+
+# Storage tiers
+HOT_DIR = BASE_DIR / "music_hot"   # SSD / internal
+COLD_DIR = BASE_DIR / "music_cold" # External HDD
+HOT_DIR.mkdir(exist_ok=True)
+COLD_DIR.mkdir(exist_ok=True)
+
+# Update Track model if needed - add location column via migration-like
+# For simplicity, file_path already tracks location
+
+@app.websocket("/ws/controls")
+async def websocket_controls(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            # Broadcast play/pause/seek/next to all devices
+            await manager.broadcast({"type": "control", "action": data.get("action"), "payload": data.get("payload")})
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+@app.get("/api/recommendations")
+def get_recommendations(db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    # Hybrid: top played + similar by genre/artist from history
+    top = db.query(Track).order_by(Track.play_count.desc()).limit(30).all()
+    recent_history = db.query(PlayHistory).order_by(PlayHistory.played_at.desc()).limit(20).all()
+    listened_ids = {h.track_id for h in recent_history}
+    # Simple filter: prefer tracks user has some history with or high play
+    recs = [t for t in top if t.id in listened_ids or t.play_count > 0][:15]
+    if not recs:
+        recs = top[:15]
+    return {
+        "for_you": [{"id": t.id, "title": t.title, "artist": t.artist, "genre": t.genre, "duration": t.duration, "play_count": t.play_count} for t in recs],
+        "listened_filter": True
+    }
+
+@app.get("/api/search")
+def search(q: str, filter_listened: bool = True, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    q_obj = db.query(Track).filter(
+        (Track.title.ilike(f"%{q}%")) | (Track.artist.ilike(f"%{q}%")) | (Track.album.ilike(f"%{q}%"))
+    )
+    if filter_listened:
+        # Prioritize tracks with play history
+        listened = db.query(PlayHistory.track_id).distinct().subquery()
+        q_obj = q_obj.outerjoin(listened, Track.id == listened.c.track_id).order_by(listened.c.track_id.isnot(None).desc(), Track.play_count.desc())
+    tracks = q_obj.limit(40).all()
+    return [{"id": t.id, "title": t.title, "artist": t.artist, "album": t.album, "genre": t.genre, "duration": t.duration, "play_count": t.play_count} for t in tracks]
+
+@app.get("/api/autofill")
+def autofill(q: str, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    """Suggestions based on recommendations and partial match, filtered by listened."""
+    if len(q) < 1:
+        return []
+    results = search(q, filter_listened=True, db=db, user=user)
+    return [{"label": f"{t['title']} — {t['artist']}", "id": t["id"], "title": t["title"], "artist": t["artist"]} for t in results[:10]]
+
+@app.post("/api/sort-storage")
+def sort_storage(hot_threshold: int = 5, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    """Move frequently played tracks to HOT (SSD), rare ones to COLD (external)."""
+    tracks = db.query(Track).all()
+    moved = {"hot": 0, "cold": 0}
+    for t in tracks:
+        current = Path(t.file_path)
+        if not current.exists():
+            continue
+        target_dir = HOT_DIR if t.play_count >= hot_threshold else COLD_DIR
+        target = target_dir / current.name
+        if current.parent != target_dir and not target.exists():
+            try:
+                shutil.move(str(current), str(target))
+                t.file_path = str(target)
+                moved["hot" if target_dir == HOT_DIR else "cold"] += 1
+            except Exception as e:
+                print(f"Move failed for {current}: {e}")
+    db.commit()
+    return {"moved": moved, "hot_threshold": hot_threshold}
+
+# Enhance stream for partial/incomplete files (range requests already supported)
+# Existing stream_file handles ranges; add note that clients can start playback early.
+
+# Add login page simple
+@app.get("/login", response_class=HTMLResponse)
+def login_page():
+    return """
+    <form method="get" action="/">
+      <h2>MusicStream Login</h2>
+      <p>Use browser basic auth or enter below (demo).</p>
+      <input name="user" placeholder="admin"><br>
+      <input name="pass" type="password" placeholder="password"><br>
+      <button>Login</button>
+    </form>
+    <script>
+      // Browser will prompt for basic auth on protected endpoints
+    </script>
+    """
+
+# Protect main routes with Depends(get_current_user) where appropriate
+# Note: For full protection, wrap more endpoints. For demo, search/recs are protected.
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+import mutagen
+from mutagen.mp3 import MP3
+from mutagen.flac import FLAC
+from mutagen.id3 import ID3
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+# Config
+BASE_DIR = Path(__file__).parent
+MUSIC_DIR = BASE_DIR / "music"
+UPLOAD_DIR = BASE_DIR / "uploads"
+DATA_DIR = BASE_DIR / "data"
+DB_PATH = DATA_DIR / "music.db"
+
+MUSIC_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(exist_ok=True)
+
+# Database
+engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class Track(Base):
+    __tablename__ = "tracks"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    artist = Column(String, index=True)
+    album = Column(String, index=True)
+    genre = Column(String, index=True)
+    duration = Column(Float)
+    file_path = Column(String, unique=True)
+    cover_path = Column(String, nullable=True)
+    added_at = Column(DateTime, default=datetime.utcnow)
+    play_count = Column(Integer, default=0)
+
+class PlayHistory(Base):
+    __tablename__ = "play_history"
+    id = Column(Integer, primary_key=True)
+    track_id = Column(Integer)
+    played_at = Column(DateTime, default=datetime.utcnow)
+
+class PresetAction(Base):
+    __tablename__ = "preset_actions"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    query = Column(String)
+    action_type = Column(String)  # search, play, verify
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# Add after Base.metadata.create_all
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# App
+app = FastAPI(title="MusicStream", description="Self-hosted Spotify-like music server")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+# Helpers
+def extract_metadata(file_path: Path):
+    try:
+        audio = mutagen.File(file_path)
+        if audio is None:
+            return None
+        title = str(audio.get("title", [file_path.stem])[0]) if audio.get("title") else file_path.stem
+        artist = str(audio.get("artist", ["Unknown Artist"])[0]) if audio.get("artist") else "Unknown Artist"
+        album = str(audio.get("album", ["Unknown Album"])[0]) if audio.get("album") else "Unknown Album"
+        genre = str(audio.get("genre", ["Unknown"])[0]) if audio.get("genre") else "Unknown"
+        duration = audio.info.length if audio.info else 0
+        return {
+            "title": title[:200],
+            "artist": artist[:200],
+            "album": album[:200],
+            "genre": genre[:100],
+            "duration": duration,
+        }
+    except Exception:
+        return {
+            "title": file_path.stem,
+            "artist": "Unknown Artist",
+            "album": "Unknown Album",
+            "genre": "Unknown",
+            "duration": 0,
+        }
+
+def scan_library(db: Session):
+    """Scan music directory and add new tracks."""
+    supported = {".mp3", ".flac", ".wav", ".ogg", ".m4a"}
+    for file_path in MUSIC_DIR.rglob("*"):
+        if file_path.suffix.lower() in supported and file_path.is_file():
+            existing = db.query(Track).filter(Track.file_path == str(file_path)).first()
+            if not existing:
+                meta = extract_metadata(file_path)
+                if meta:
+                    track = Track(
+                        title=meta["title"],
+                        artist=meta["artist"],
+                        album=meta["album"],
+                        genre=meta["genre"],
+                        duration=meta["duration"],
+                        file_path=str(file_path),
+                    )
+                    db.add(track)
+    db.commit()
+
+# Streaming with range support
+def stream_file(file_path: Path, request: Request):
+    file_size = file_path.stat().st_size
+    range_header = request.headers.get("range")
+    if range_header:
+        start, end = range_header.replace("bytes=", "").split("-")
+        start = int(start) if start else 0
+        end = int(end) if end else file_size - 1
+        if start >= file_size:
+            raise HTTPException(status_code=416, detail="Range not satisfiable")
+        end = min(end, file_size - 1)
+        chunk_size = end - start + 1
+
+        def iterfile():
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    data = f.read(min(65536, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(
+            iterfile(),
+            status_code=206,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(chunk_size),
+            },
+        )
+    else:
+        return FileResponse(file_path, media_type="audio/mpeg")
+
+# Routes
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    with open(BASE_DIR / "static" / "index.html", "r") as f:
+        return f.read()
+
+@app.post("/api/upload")
+async def upload_music(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
+    uploaded = []
+    for file in files:
+        if not file.filename:
+            continue
+        dest = MUSIC_DIR / file.filename
+        # Avoid overwrite
+        counter = 1
+        while dest.exists():
+            dest = MUSIC_DIR / f"{dest.stem}_{counter}{dest.suffix}"
+            counter += 1
+        with open(dest, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        meta = extract_metadata(dest)
+        if meta:
+            track = Track(
+                title=meta["title"],
+                artist=meta["artist"],
+                album=meta["album"],
+                genre=meta["genre"],
+                duration=meta["duration"],
+                file_path=str(dest),
+            )
+            db.add(track)
+            uploaded.append(meta["title"])
+    db.commit()
+    scan_library(db)
+    return {"uploaded": uploaded, "count": len(uploaded)}
+
+@app.get("/api/scan")
+def scan(db: Session = Depends(get_db)):
+    scan_library(db)
+    return {"status": "scanned"}
+
+@app.get("/api/tracks")
+def get_tracks(genre: Optional[str] = None, artist: Optional[str] = None, album: Optional[str] = None, 
+               limit: int = 100, db: Session = Depends(get_db)):
+    q = db.query(Track)
+    if genre:
+        q = q.filter(Track.genre.ilike(f"%{genre}%"))
+    if artist:
+        q = q.filter(Track.artist.ilike(f"%{artist}%"))
+    if album:
+        q = q.filter(Track.album.ilike(f"%{album}%"))
+    tracks = q.order_by(Track.play_count.desc(), Track.added_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": t.id,
+            "title": t.title,
+            "artist": t.artist,
+            "album": t.album,
+            "genre": t.genre,
+            "duration": t.duration,
+            "play_count": t.play_count,
+        }
+        for t in tracks
+    ]
+
+@app.get("/api/genres")
+def get_genres(db: Session = Depends(get_db)):
+    genres = db.query(Track.genre).distinct().all()
+    return [g[0] for g in genres if g[0]]
+
+@app.get("/api/artists")
+def get_artists(db: Session = Depends(get_db)):
+    artists = db.query(Track.artist).distinct().all()
+    return [a[0] for a in artists if a[0]]
+
+@app.get("/api/albums")
+def get_albums(db: Session = Depends(get_db)):
+    albums = db.query(Track.album).distinct().all()
+    return [a[0] for a in albums if a[0]]
+
+@app.get("/api/recommendations")
+def get_recommendations(db: Session = Depends(get_db)):
+    # Simple recs: top played genres + random from those, plus recently added
+    top_genres = (
+        db.query(Track.genre)
+        .group_by(Track.genre)
+        .order_by(db.query(Track.play_count).filter(Track.genre == Track.genre).label("pc").desc())
+        .limit(5)
+        .all()
+    )
+    # Fallback
+    rec_tracks = db.query(Track).order_by(Track.play_count.desc()).limit(20).all()
+    recent = db.query(Track).order_by(Track.added_at.desc()).limit(10).all()
+    return {
+        "for_you": [
+            {"id": t.id, "title": t.title, "artist": t.artist, "genre": t.genre, "duration": t.duration}
+            for t in rec_tracks
+        ],
+        "recently_added": [
+            {"id": t.id, "title": t.title, "artist": t.artist, "genre": t.genre, "duration": t.duration}
+            for t in recent
+        ],
+        "genres": [g[0] for g in top_genres if g[0]],
+    }
+
+@app.post("/api/play/{track_id}")
+def record_play(track_id: int, db: Session = Depends(get_db)):
+    track = db.query(Track).filter(Track.id == track_id).first()
+    if not track:
+        raise HTTPException(404, "Track not found")
+    track.play_count += 1
+    history = PlayHistory(track_id=track_id)
+    db.add(history)
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/stream/{track_id}")
+async def stream_track(track_id: int, request: Request, db: Session = Depends(get_db)):
+    track = db.query(Track).filter(Track.id == track_id).first()
+    if not track or not Path(track.file_path).exists():
+        raise HTTPException(404, "Track not found")
+    return stream_file(Path(track.file_path), request)
+
+@app.get("/api/search")
+def search(q: str, db: Session = Depends(get_db)):
+    tracks = db.query(Track).filter(
+        (Track.title.ilike(f"%{q}%")) |
+        (Track.artist.ilike(f"%{q}%")) |
+        (Track.album.ilike(f"%{q}%"))
+    ).limit(50).all()
+    return [
+        {"id": t.id, "title": t.title, "artist": t.artist, "album": t.album, "genre": t.genre, "duration": t.duration}
+        for t in tracks
+    ]
+
+@app.post("/api/presets")
+def create_preset(name: str, query: str, action_type: str = "search", db: Session = Depends(get_db)):
+    preset = PresetAction(name=name, query=query, action_type=action_type)
+    db.add(preset)
+    db.commit()
+    return {"id": preset.id, "name": name}
+
+@app.get("/api/presets")
+def list_presets(db: Session = Depends(get_db)):
+    presets = db.query(PresetAction).all()
+    return [{"id": p.id, "name": p.name, "query": p.query, "action_type": p.action_type} for p in presets]
+
+from automation.automator import MediaServerAutomator
+
+automator = MediaServerAutomator()
+
+from pydantic import BaseModel
+
+class SequencePayload(BaseModel):
+    name: str
+    steps: List[dict]
+
+@app.post("/api/automation/sequence")
+def save_automation_sequence(payload: SequencePayload):
+    automator.save_sequence(payload.name, payload.steps)
+    return {"saved": payload.name}
+
+@app.get("/api/automation/sequences")
+def list_sequences():
+    return list(automator.sequences.keys())
+
+from automation.validator import DownloadValidator
+
+validator = DownloadValidator()
+
+@app.post("/api/automation/run")
+def run_automation(name: str, query: Optional[str] = None, extra_delay: float = 0.0):
+    """Run a pre-recorded click/type sequence. extra_delay (seconds) is added after every step for slow sites."""
+    try:
+        result = automator.run_sequence(name, query, extra_delay)
+        return result
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+@app.post("/api/validate-download")
+def validate_download(
+    expected_title: Optional[str] = None,
+    expected_artist: Optional[str] = None,
+    expected_duration: Optional[float] = None,
+    expected_name: Optional[str] = None,
+    downloads_dir: Optional[str] = None,
+    timeout: int = 90,
+    duration_tolerance: float = 3.0,
+):
+    """
+    Watch the downloads folder, handle zip/OPUS/FLAC/etc., and validate
+    name, artist, full title, and song length.
+    """
+    if downloads_dir:
+        validator.downloads_dir = Path(downloads_dir)
+    downloaded = validator.wait_for_download(timeout=timeout)
+    if not downloaded:
+        raise HTTPException(408, "No new download detected within timeout")
+    
+    expected = {}
+    if expected_title: expected["title"] = expected_title
+    if expected_artist: expected["artist"] = expected_artist
+    if expected_duration is not None: expected["duration"] = expected_duration
+    if expected_name: expected["name"] = expected_name
+    
+    result = validator.validate(downloaded, expected, duration_tolerance)
+    return result
+
+@app.post("/api/query-and-validate")
+def query_and_validate(
+    sequence: str,
+    query: str,
+    expected_title: Optional[str] = None,
+    expected_artist: Optional[str] = None,
+    expected_duration: Optional[float] = None,
+    extra_delay: float = 1.0,
+    timeout: int = 120,
+):
+    """Run automation sequence, then wait for download and validate it."""
+    # Run the click sequence
+    automator.run_sequence(sequence, query, extra_delay)
+    # Wait and validate
+    downloaded = validator.wait_for_download(timeout=timeout)
+    if not downloaded:
+        return {"automation": "completed", "validation": "no download detected"}
+    expected = {
+        "title": expected_title,
+        "artist": expected_artist,
+        "duration": expected_duration,
+    }
+    expected = {k: v for k, v in expected.items() if v is not None}
+    validation = validator.validate(downloaded, expected)
+    return {"automation": "completed", "downloaded": str(downloaded), "validation": validation}
+
+@app.get("/api/automation/record-position")
+def record_mouse_position(label: str = "position"):
+    """Helper: move mouse to target, then call this. Returns coordinates after 3s delay."""
+    try:
+        pos = automator.record_position(label)
+        return {"x": pos.x, "y": pos.y, "label": label}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/verify-playlist")
+def verify_against_playlist(track_title: str, artist: str, playlist_file: Optional[str] = None):
+    """Verify a track against a Spotify recommendation playlist file (JSON/CSV)."""
+    # Placeholder — user will provide the file
+    return {
+        "track": f"{artist} - {track_title}",
+        "in_playlist": False,
+        "message": "Upload your Spotify playlist info file to enable verification"
+    }
+
+@app.get("/api/search-from-phone")
+def search_from_phone(q: str, db: Session = Depends(get_db)):
+    """Endpoint that phone can hit; desktop can also poll or receive via websocket later."""
+    tracks = db.query(Track).filter(
+        (Track.title.ilike(f"%{q}%")) | (Track.artist.ilike(f"%{q}%"))
+    ).limit(30).all()
+    return [{"id": t.id, "title": t.title, "artist": t.artist, "album": t.album} for t in tracks]
+    import uvicorn
+    # Initial scan
+    db = SessionLocal()
+    scan_library(db)
+    db.close()
+    uvicorn.run(app, host="0.0.0.0", port=8000)

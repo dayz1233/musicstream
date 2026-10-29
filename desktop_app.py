@@ -1,0 +1,234 @@
+"""
+MusicStream Desktop Launcher
+Simple application window with drag-and-drop for Spotify playlist CSVs.
+Launches the backend server in the background and shows process status.
+"""
+import os
+import sys
+import csv
+import json
+import threading
+import subprocess
+import tkinter as tk
+from tkinter import scrolledtext, messagebox, filedialog
+from pathlib import Path
+import updater
+import webbrowser
+
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    HAS_DND = True
+except ImportError:
+    HAS_DND = False
+    print("tkinterdnd2 not available — using file dialog fallback")
+
+BASE_DIR = Path(__file__).parent
+SERVER_PROCESS = None
+
+class MusicStreamApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("MusicStream Desktop")
+        self.root.geometry("900x700")
+        self.root.configure(bg="#1a1a1a")
+
+        # Header
+        header = tk.Label(root, text="MusicStream", font=("Segoe UI", 20, "bold"),
+                          fg="#1db954", bg="#1a1a1a")
+        header.pack(pady=10)
+
+        sub = tk.Label(root, text="Drag & drop Spotify playlist CSVs here  |  Server status below",
+                       fg="#b3b3b3", bg="#1a1a1a", font=("Segoe UI", 10))
+        sub.pack()
+
+        # Drop zone
+        self.drop_frame = tk.Frame(root, bg="#2a2a2a", relief="ridge", bd=2)
+        self.drop_frame.pack(fill="x", padx=20, pady=10, ipady=40)
+
+        self.drop_label = tk.Label(self.drop_frame,
+                                    text="Drop Spotify CSV files here\nor click to browse",
+                                    fg="#ffffff", bg="#2a2a2a", font=("Segoe UI", 12))
+        self.drop_label.pack(expand=True)
+
+        if HAS_DND:
+            self.drop_frame.drop_target_register(DND_FILES)
+            self.drop_frame.dnd_bind('<<Drop>>', self.on_drop)
+        self.drop_frame.bind("<Button-1>", lambda e: self.browse_csv())
+
+        # Buttons
+        btn_frame = tk.Frame(root, bg="#1a1a1a")
+        btn_frame.pack(pady=5)
+        tk.Button(btn_frame, text="Start Server", command=self.start_server,
+                  bg="#1db954", fg="white", relief="flat", padx=15).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Stop Server", command=self.stop_server,
+                  bg="#c45c4a", fg="white", relief="flat", padx=15).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Open Web UI", command=self.open_browser,
+                  bg="#333", fg="white", relief="flat", padx=15).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Sort Storage Now", command=self.trigger_sort,
+                  bg="#333", fg="white", relief="flat", padx=15).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Check for updates", command=self.check_updates,
+                  bg="#333", fg="white", relief="flat", padx=15).pack(side="left", padx=5)
+
+        url_row = tk.Frame(root, bg="#1a1a1a")
+        url_row.pack(fill="x", padx=20, pady=4)
+        tk.Label(url_row, text="Update URL", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
+        self.update_url = tk.Entry(url_row, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
+        self.update_url.pack(side="left", fill="x", expand=True, padx=8)
+        self.update_url.insert(0, updater.load_config().get("url", ""))
+        tk.Button(url_row, text="Save", command=self.save_update_url,
+                  bg="#333", fg="white", relief="flat").pack(side="left")
+
+        # Status / process log
+        tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20)
+        self.log = scrolledtext.ScrolledText(root, height=22, bg="#121212", fg="#e0e0e0",
+                                              font=("Consolas", 9), insertbackground="white")
+        self.log.pack(fill="both", expand=True, padx=20, pady=5)
+
+        self.log_message("Ready. Drag a Spotify playlist CSV onto the drop zone.")
+        self.log_message(f"Program version {updater.local_version()}. Updates download only files that changed.")
+        self.root.after(1500, self.check_updates_silent)
+
+    def log_message(self, msg):
+        self.log.insert("end", msg + "\n")
+        self.log.see("end")
+        self.root.update_idletasks()
+
+    def on_drop(self, event):
+        files = self.root.tk.splitlist(event.data)
+        for f in files:
+            self.process_csv(f)
+
+    def browse_csv(self):
+        paths = filedialog.askopenfilenames(filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        for p in paths:
+            self.process_csv(p)
+
+    def process_csv(self, path):
+        path = Path(path)
+        if not path.exists() or path.suffix.lower() != ".csv":
+            self.log_message(f"Skipped (not a CSV): {path.name}")
+            return
+        self.log_message(f"\n=== Processing: {path.name} ===")
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                tracks = list(reader)
+            self.log_message(f"Found {len(tracks)} tracks in playlist.")
+            # Save parsed data for the server
+            out = BASE_DIR / "data" / f"playlist_{path.stem}.json"
+            out.parent.mkdir(exist_ok=True)
+            simplified = []
+            for t in tracks:
+                simplified.append({
+                    "title": t.get("Track Name", "").strip('"'),
+                    "artist": t.get("Artist Name(s)", "").strip('"'),
+                    "album": t.get("Album Name", "").strip('"'),
+                    "duration_ms": t.get("Duration (ms)", ""),
+                    "genres": t.get("Genres", ""),
+                    "uri": t.get("Track URI", ""),
+                    "popularity": t.get("Popularity", ""),
+                })
+            with open(out, "w", encoding="utf-8") as f:
+                json.dump(simplified, f, indent=2)
+            self.log_message(f"Saved parsed playlist to {out.name}")
+            self.log_message("Sample tracks:")
+            for item in simplified[:5]:
+                self.log_message(f"  • {item['title']} — {item['artist']}")
+            if len(simplified) > 5:
+                self.log_message(f"  ... and {len(simplified)-5} more")
+            self.log_message("These will be used for recommendations and media-server matching.")
+            # TODO: call server endpoint to import once server is running
+        except Exception as e:
+            self.log_message(f"Error parsing CSV: {e}")
+
+    def start_server(self):
+        global SERVER_PROCESS
+        if SERVER_PROCESS and SERVER_PROCESS.poll() is None:
+            self.log_message("Server is already running.")
+            return
+        self.log_message("Starting backend server...")
+        try:
+            SERVER_PROCESS = subprocess.Popen(
+                [sys.executable, "main.py"],
+                cwd=BASE_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            )
+            threading.Thread(target=self.stream_server_output, daemon=True).start()
+            self.log_message("Server process started. Waiting for it to come up...")
+        except Exception as e:
+            self.log_message(f"Failed to start server: {e}")
+
+    def stream_server_output(self):
+        if not SERVER_PROCESS:
+            return
+        for line in SERVER_PROCESS.stdout:
+            self.root.after(0, lambda l=line: self.log_message("[server] " + l.rstrip()))
+
+    def stop_server(self):
+        global SERVER_PROCESS
+        if SERVER_PROCESS and SERVER_PROCESS.poll() is None:
+            SERVER_PROCESS.terminate()
+            self.log_message("Server stopped.")
+            SERVER_PROCESS = None
+        else:
+            self.log_message("Server is not running.")
+
+    def open_browser(self):
+        webbrowser.open("http://localhost:8000")
+        self.log_message("Opened web UI in browser.")
+
+    def save_update_url(self):
+        updater.save_url(self.update_url.get())
+        self.log_message("Update URL saved. Music, playlists, and the database are never replaced.")
+
+    def check_updates_silent(self):
+        if not updater.load_config().get("url"):
+            self.log_message("No update URL yet. Paste one and save it to get file-level updates.")
+            return
+        threading.Thread(target=self._run_update, args=(False,), daemon=True).start()
+
+    def check_updates(self):
+        updater.save_url(self.update_url.get())
+        threading.Thread(target=self._run_update, args=(True,), daemon=True).start()
+
+    def _run_update(self, manual):
+        try:
+            result = updater.check_and_apply(log=lambda m: self.root.after(0, lambda: self.log_message(m)))
+        except Exception as exc:
+            self.root.after(0, lambda: self.log_message(f"Update failed: {exc}"))
+            return
+        def finish():
+            if not result.get("ok"):
+                if manual:
+                    self.log_message("Set an update URL first. Only changed program files are downloaded.")
+                return
+            changed = result.get("changed") or []
+            if not changed:
+                self.log_message(f"Up to date ({result.get('remote') or updater.local_version()}).")
+                return
+            self.log_message("Updated: " + ", ".join(changed))
+            if messagebox.askyesno("MusicStream", "Update installed. Restart the window now?"):
+                self.stop_server()
+                os.execv(sys.executable, [sys.executable, str(BASE_DIR / "desktop_app.py")])
+        self.root.after(0, finish)
+
+    def trigger_sort(self):
+        self.log_message("Triggering storage sort (hot/cold)...")
+        # Could call the API once server is up; for now just log
+        self.log_message("(Call /api/sort-storage once the server is running, or it runs automatically hourly.)")
+
+def main():
+    if HAS_DND:
+        root = TkinterDnD.Tk()
+    else:
+        root = tk.Tk()
+    app = MusicStreamApp(root)
+    root.protocol("WM_DELETE_WINDOW", lambda: (app.stop_server(), root.destroy()))
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
