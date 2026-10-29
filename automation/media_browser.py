@@ -97,6 +97,12 @@ class MediaBrowser:
                     box.put(self._save_sequence(payload.get("name") or ""))
                 elif action == "run-sequence":
                     box.put(self._run_sequence(page, payload))
+                elif action == "record":
+                    box.put(self._record_part(page, payload.get("part") or ""))
+                elif action == "clear":
+                    box.put(self._clear_recipe())
+                elif action == "fetch":
+                    box.put(self._fetch(page, payload))
                 else:
                     box.put({"ok": False, "error": f"Unknown action {action}"})
             except Exception as exc:
@@ -191,6 +197,7 @@ class MediaBrowser:
             "ready": bool(config.get("selector")),
             "draft": config.get("draft") or [],
             "sequences": list((config.get("sequences") or {}).keys()),
+            "recipe": self._recipe_status(config.get("recipe") or {}),
         }
 
     def _open(self, page, url: str) -> dict:
@@ -366,6 +373,132 @@ class MediaBrowser:
             if score > (best["score"] if best else 0):
                 best = {"score": score, "text": text[:180], "handle": handle}
         return best
+
+    def _recipe_status(self, recipe: dict) -> dict:
+        return {
+            "search_field": bool(recipe.get("search_field")),
+            "search_button": bool(recipe.get("search_button")),
+            "results": bool(recipe.get("results")),
+            "result": bool(recipe.get("result")),
+            "download": bool(recipe.get("download")),
+            "extra": len(recipe.get("extra") or []),
+        }
+
+    def _capture_part(self, page, as_row: bool) -> str:
+        return page.evaluate(
+            """(asRow) => new Promise((resolve) => {
+                const once = (event) => {
+                    const target = event.target;
+                    const el = asRow
+                        ? (target.closest('li, tr, article, [role="listitem"], [role="row"], a') || target)
+                        : (target.closest('input, textarea, button, a, [role="button"], [contenteditable="true"]') || target);
+                    let found = '';
+                    if (!asRow && el.id) found = '#' + CSS.escape(el.id);
+                    else if (!asRow && el.getAttribute('name')) found = el.tagName.toLowerCase() + '[name="' + el.getAttribute('name').replaceAll('"', '') + '"]';
+                    else if (!asRow && el.getAttribute('placeholder')) found = el.tagName.toLowerCase() + '[placeholder="' + el.getAttribute('placeholder').replaceAll('"', '') + '"]';
+                    else if (el.classList && el.classList.length) {
+                        const name = [...el.classList].find(item => !/\\d{4,}/.test(item));
+                        if (name) found = el.tagName.toLowerCase() + '.' + CSS.escape(name);
+                    }
+                    if (!found) {
+                        const mark = 'ms-' + Date.now();
+                        el.setAttribute('data-musicstream-step', mark);
+                        found = '[data-musicstream-step="' + mark + '"]';
+                    }
+                    resolve(found);
+                };
+                document.addEventListener('click', once, {capture: true, once: true});
+                setTimeout(() => resolve(''), 60000);
+            })""",
+            as_row,
+        )
+
+    def _record_part(self, page, part: str) -> dict:
+        allowed = {"search_field", "search_button", "results", "result", "download", "extra"}
+        if part not in allowed:
+            return {"ok": False, "error": "Unknown recording target."}
+        selector = self._capture_part(page, part in {"results", "result"})
+        if not selector:
+            return {"ok": False, "error": "Nothing was clicked in the media Chrome window."}
+        config = self._config()
+        recipe = config.get("recipe") or {}
+        if part == "extra":
+            recipe.setdefault("extra", []).append(selector)
+        else:
+            recipe[part] = selector
+        config["recipe"] = recipe
+        self._save_config(config)
+        return {"ok": True, "part": part, "recipe": self._recipe_status(recipe)}
+
+    def _clear_recipe(self) -> dict:
+        config = self._config()
+        config["recipe"] = {}
+        self._save_config(config)
+        return {"ok": True, "recipe": self._recipe_status({})}
+
+    def _click_match(self, page, selector: str, title: str, artist: str):
+        wanted_title = core_title(title).lower()
+        wanted_artist = clean_text((artist or "").split(";")[0]).lower()
+        query = f"{wanted_artist} {wanted_title}".strip()
+        best = None
+        for handle in page.locator(selector).all()[:40]:
+            try:
+                text = " ".join(handle.inner_text(timeout=400).split())
+            except Exception:
+                continue
+            low = text.lower()
+            score = 0
+            if wanted_title and wanted_title in low:
+                score += 5
+            if wanted_artist and wanted_artist in low:
+                score += 3
+            if query and query in low:
+                score += 2
+            if score > (best["score"] if best else 0):
+                best = {"score": score, "handle": handle, "text": text[:180]}
+        if best and best["score"] >= 5:
+            best["handle"].click(timeout=8000)
+            return best["text"]
+        page.locator(selector).first.click(timeout=8000)
+        return ""
+
+    def _fetch(self, page, payload: dict) -> dict:
+        recipe = self._config().get("recipe") or {}
+        if not recipe.get("search_field"):
+            return {"ok": False, "error": "Record the media server search field first."}
+        title = payload.get("title") or ""
+        artist = payload.get("artist") or ""
+        query = clean_text(payload.get("query") or f"{artist} {core_title(title)}")
+        delay = float(payload.get("delay") or 1.5)
+        field = page.locator(recipe["search_field"]).first
+        field.click(timeout=8000)
+        field.fill("")
+        field.press_sequentially(query, delay=35)
+        page.wait_for_timeout(int(delay * 1000))
+        if recipe.get("search_button"):
+            page.locator(recipe["search_button"]).first.click(timeout=8000)
+        else:
+            field.press("Enter")
+        page.wait_for_timeout(int(max(delay, 1.2) * 1000))
+        if recipe.get("results"):
+            area = page.locator(recipe["results"]).first
+            area.scroll_into_view_if_needed(timeout=8000)
+            box = area.bounding_box()
+            if box:
+                page.mouse.move(box["x"] + min(box["width"] / 2, 200), box["y"] + 30)
+                page.mouse.wheel(0, 700)
+            page.wait_for_timeout(800)
+        matched = ""
+        if recipe.get("result"):
+            matched = self._click_match(page, recipe["result"], title or query, artist)
+            page.wait_for_timeout(int(max(delay, 1.0) * 1000))
+        if recipe.get("download"):
+            page.locator(recipe["download"]).first.click(timeout=8000)
+            page.wait_for_timeout(800)
+        for selector in recipe.get("extra") or []:
+            page.locator(selector).first.click(timeout=8000)
+            page.wait_for_timeout(800)
+        return {"ok": True, "query": query, "matched": matched}
 
 
 media_browser = MediaBrowser()
