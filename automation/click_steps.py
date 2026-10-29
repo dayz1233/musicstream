@@ -440,8 +440,6 @@ class ClickSteps:
         self.recording = True
         self.abort = False
         self.note("RECORDING. Click through the site. Press Stop when you are done.", "")
-        self._mouse = mouse.Listener(on_click=self._on_click, on_scroll=self._on_scroll)
-        self._mouse.start()
         self._start_keys()
         return self.status()
 
@@ -470,7 +468,13 @@ class ClickSteps:
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            self._handle_key(item.get("key") or "", item.get("char") or "")
+            kind = item.get("type") or "key"
+            if kind == "click":
+                self._on_click(item.get("x") or 0, item.get("y") or 0, None, True)
+            elif kind == "scroll":
+                self._on_scroll(item.get("x") or 0, item.get("y") or 0, item.get("dx") or 0, item.get("dy") or 0)
+            else:
+                self._handle_key(item.get("key") or "", item.get("char") or "")
 
     def _stop_keys(self):
         proc = self._key_proc
@@ -536,16 +540,11 @@ class ClickSteps:
         if not self.recording:
             return
         name = (name or "").lower()
-        if name == "enter":
+        if name in {"enter", "tab", "space", "page_down", "page_up", "up", "down", "left", "right", "home", "end", "esc", "delete"}:
             self._flush_typing()
             with self.lock:
-                self._add_step({"action": "key", "key": "enter"})
-            return
-        if name == "tab":
-            self._flush_typing()
-            with self.lock:
-                self._add_step({"action": "key", "key": "tab"})
-            self.note("Recorded Tab.", "The website still has the key, so it can move to the next field.")
+                self._add_step({"action": "key", "key": name})
+            self.note(f"Recorded {name.replace('_', ' ')}.", "The website still receives that key.")
             return
         if name == "backspace":
             self._typing = self._typing[:-1]
@@ -637,7 +636,12 @@ class ClickSteps:
                 time.sleep(0.1)
                 typer.type(text)
             elif action == "key":
-                special = {"enter": Key.enter, "tab": Key.tab, "space": Key.space}.get(step.get("key") or "enter", Key.enter)
+                special = {
+                    "enter": Key.enter, "tab": Key.tab, "space": Key.space,
+                    "page_down": Key.page_down, "page_up": Key.page_up,
+                    "up": Key.up, "down": Key.down, "left": Key.left, "right": Key.right,
+                    "home": Key.home, "end": Key.end, "esc": Key.esc, "delete": Key.delete,
+                }.get(step.get("key") or "enter", Key.enter)
                 typer.press(special)
                 typer.release(special)
             if not self._pause(step.get("wait", 0.4)):
