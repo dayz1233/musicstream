@@ -192,7 +192,21 @@ body {
   cursor: pointer;
 }
 #upload-area:hover { border-color: var(--accent); }
-input[type="file"] { display: none; }
+#step-note {
+  display: none;
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: 560px;
+  background: #1db954;
+  color: #04210f;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
 .search-bar {
   background: #242424;
   border: none;
@@ -215,6 +229,7 @@ input[type="file"] { display: none; }
 </style>
 </head>
 <body>
+<div id="step-note"></div>
 <div id="app">
   <div id="sidebar">
     <div class="nav-item active" data-page="Home" onclick="showHome()">Home</div>
@@ -648,6 +663,21 @@ function connectControls() {
   };
 }
 connectControls();
+
+async function pollStepNote() {
+  const data = await fetchJSON('/api/media-browser').catch(() => null);
+  const note = document.getElementById('step-note');
+  if (!note) return;
+  const text = [data && data.message, data && data.next].filter(Boolean).join(' ');
+  if (text) {
+    note.style.display = 'block';
+    note.textContent = text;
+  } else {
+    note.style.display = 'none';
+  }
+  setTimeout(pollStepNote, 700);
+}
+pollStepNote();
 
 function sendControl(action, payload = {}) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({action, payload}));
