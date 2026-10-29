@@ -487,8 +487,8 @@ def media_browser_status():
 
 
 @app.post("/api/media-browser/open")
-def media_browser_open(url: str = ""):
-    result = click_steps.open_chrome(url)
+def media_browser_open(address: str = ""):
+    result = click_steps.open_chrome(address)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error") or "Could not open Chrome")
     return result
