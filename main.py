@@ -528,6 +528,14 @@ def media_browser_edit_steps(indexes: str, wait: str = "", name: str = ""):
     return result
 
 
+@app.post("/api/media-browser/move")
+def media_browser_move(index: int, x: int, y: int):
+    result = click_steps.move_step(index, x, y)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Could not move that point")
+    return result
+
+
 @app.post("/api/media-browser/estop")
 def media_browser_estop():
     return click_steps.estop()
