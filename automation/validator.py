@@ -29,22 +29,23 @@ class DownloadValidator:
         self.temp_dir = Path(tempfile.gettempdir()) / "musicstream_extract"
         self.temp_dir.mkdir(exist_ok=True)
 
-    def wait_for_download(self, timeout: int = 120, poll_interval: float = 1.0) -> Optional[Path]:
+    def wait_for_download(self, timeout: int = 120, poll_interval: float = 1.0, started_at: float = None) -> Optional[Path]:
         """Watch downloads folder for a new file. Returns path when size stabilizes."""
-        start = time.time()
-        before = set(self.downloads_dir.glob("*"))
-        while time.time() - start < timeout:
-            after = set(self.downloads_dir.glob("*"))
-            new_files = after - before
-            if new_files:
-                # Wait for the largest new file to finish writing
-                candidate = max(new_files, key=lambda p: p.stat().st_size if p.is_file() else 0)
-                if candidate.is_file():
-                    size1 = candidate.stat().st_size
-                    time.sleep(2)
-                    size2 = candidate.stat().st_size
-                    if size1 == size2 and size1 > 0:
-                        return candidate
+        started_at = started_at or time.time()
+        ignored = {".crdownload", ".tmp", ".part"}
+        while time.time() - started_at < timeout:
+            candidates = [
+                path for path in self.downloads_dir.glob("*")
+                if path.is_file()
+                and path.suffix.lower() not in ignored
+                and path.stat().st_mtime >= started_at - 2
+            ]
+            if candidates:
+                candidate = max(candidates, key=lambda path: path.stat().st_mtime)
+                size1 = candidate.stat().st_size
+                time.sleep(2)
+                if candidate.exists() and candidate.stat().st_size == size1 and size1 > 0:
+                    return candidate
             time.sleep(poll_interval)
         return None
 
