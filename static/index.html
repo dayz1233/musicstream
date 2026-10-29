@@ -327,20 +327,27 @@ function escape(s) { return (s||'').replace(/'/g, "\\'"); }
 async function showSearch() {
   setActive('Search');
   document.getElementById('content').innerHTML = `
-    <input class="search-bar" placeholder="Search your library. Press Enter to get a missing song." oninput="doSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault(); commitSearch(this.value)}">
+    <input class="search-bar" placeholder="Search. A song that is not downloaded runs the recorded steps." oninput="doSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault(); commitSearch(this.value)}">
     <div id="search-results"></div>
   `;
 }
 
+let searchTimer = null;
+
 async function doSearch(q) {
   if (q.length < 2) return;
   const tracks = await fetchJSON(`/api/search?q=${encodeURIComponent(q)}`);
-  let html = `<button class="dice-btn" data-query="${attr(q)}" onclick="fetchQuery(this.dataset.query)">Download this search from the media server</button><div class="track-list">`;
+  let html = `<div class="track-list">`;
   tracks.forEach((t, i) => {
     html += trackRow(t, i);
   });
   html += `</div>`;
-  document.getElementById('search-results').innerHTML = html || '<p>No results</p>';
+  document.getElementById('search-results').innerHTML = html || '<p>Not downloaded. The laptop will run the recorded steps.</p>';
+  clearTimeout(searchTimer);
+  const query = q.trim();
+  if (!tracks.length && query.length >= 3) {
+    searchTimer = setTimeout(() => downloadMissing(query, ''), 1000);
+  }
 }
 
 function trackRow(t, idx) {
@@ -568,7 +575,7 @@ async function uploadFiles(files) {
   setTimeout(() => showHome(), 800);
 }
 
-async function playTrack(id, title, artist) {
+async function playTrack(id, title, artist, allowDownload = true) {
   currentTrack = { id, title, artist };
   document.querySelector('#now-playing .title').textContent = title;
   document.querySelector('#now-playing .artist').textContent = artist;
@@ -578,7 +585,8 @@ async function playTrack(id, title, artist) {
     document.getElementById('play-btn').textContent = '\u23F8';
     await fetch(`/api/play/${id}`, { method: 'POST' });
   } catch (err) {
-    document.querySelector('#now-playing .artist').textContent = 'This playlist entry has no audio file yet';
+    const missing = await downloadMissing(title, artist);
+    if (!missing) document.querySelector('#now-playing .artist').textContent = 'This song is not downloaded, and the recorded steps did not finish';
   }
 }
 
@@ -694,7 +702,7 @@ async function downloadMissing(title, artist) {
     document.querySelector('#now-playing .artist').textContent = 'Downloaded, but it did not match this song';
     return false;
   }
-  await playTrack(again.id, again.title, again.artist);
+  await playTrack(again.id, again.title, again.artist, false);
   return true;
 }
 
