@@ -101,23 +101,12 @@ class MusicStreamApp:
         media_row.pack(fill="x", padx=20, pady=4)
         self.media_url = tk.Entry(media_row, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
         self.media_url.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        self.media_url.insert(0, "https://")
         tk.Button(media_row, text="Open media browser", command=self.open_media_browser,
                   bg="#1db954", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
-        seq_row = tk.Frame(root, bg="#1a1a1a")
-        seq_row.pack(fill="x", padx=20, pady=4)
-        for label, part in (
-            ("Record search field", "search_field"),
-            ("Record search button", "search_button"),
-            ("Record results area", "results"),
-            ("Record a result", "result"),
-            ("Record download", "download"),
-            ("Record next step", "extra"),
-        ):
-            tk.Button(seq_row, text=label, command=lambda part=part: self.record_media_part(part),
-                      bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=3)
-        tk.Button(seq_row, text="Clear recording", command=self.clear_media_recording,
-                  bg="#c45c4a", fg="white", relief="flat", padx=8).pack(side="left", padx=3)
+        tk.Button(media_row, text="Stop", command=self.stop_media_recording,
+                  bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
+        tk.Button(media_row, text="Clear", command=self.clear_media_recording,
+                  bg="#c45c4a", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
 
         # Status / process log
         tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
@@ -132,6 +121,7 @@ class MusicStreamApp:
         else:
             self.log_message("Drag-and-drop is off. Install tkinterdnd2, or use Import folder.")
         self.log_message(f"Program version {updater.local_version()}. New versions install themselves.")
+        self.media_seen = 0
         self.root.after(800, self.start_server)
         self.root.after(2000, self.schedule_updates)
 
@@ -154,23 +144,35 @@ class MusicStreamApp:
         threading.Thread(target=work, daemon=True).start()
 
     def open_media_browser(self):
-        self.log_message("Opening a separate Chrome window. Your mouse will not be taken over.")
+        self.media_seen = 0
+        self.log_message("Opening a normal Chrome tab. Clicks and typing are counted as steps. Press Stop when finished.")
         self.post_local("/api/media-browser/open", {"url": self.media_url.get().strip()})
+        self.root.after(600, self.poll_media_steps)
 
-    def record_media_part(self, part):
-        labels = {
-            "search_field": "Click the search field in the media Chrome window.",
-            "search_button": "Click the search button in the media Chrome window.",
-            "results": "Click the results area in the media Chrome window.",
-            "result": "Click one search result in the media Chrome window.",
-            "download": "Click the download button in the media Chrome window.",
-            "extra": "Click the next step in the media Chrome window.",
-        }
-        self.log_message(labels.get(part, "Click in the media Chrome window."))
-        self.post_local("/api/media-browser/record", {"part": part})
+    def poll_media_steps(self):
+        def work():
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:8000/api/media-browser", timeout=3) as response:
+                    data = json.loads(response.read().decode("utf-8", "replace"))
+            except Exception:
+                return
+            steps = data.get("steps") or []
+            fresh = steps[self.media_seen:]
+            self.media_seen = len(steps)
+            for step in fresh:
+                line = f"Step {step.get('step')}: {step.get('action')}"
+                self.root.after(0, lambda line=line: self.log_message(line))
+            if data.get("recording"):
+                self.root.after(500, self.poll_media_steps)
+        threading.Thread(target=work, daemon=True).start()
+
+    def stop_media_recording(self):
+        self.log_message("Recording stopped.")
+        self.post_local("/api/media-browser/stop")
 
     def clear_media_recording(self):
-        self.log_message("Recording cleared.")
+        self.media_seen = 0
+        self.log_message("Steps cleared.")
         self.post_local("/api/media-browser/clear")
 
     def log_message(self, msg):
