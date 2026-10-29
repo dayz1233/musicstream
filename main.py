@@ -44,101 +44,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Storage tiers
-HOT_DIR = BASE_DIR / "music_hot"   # SSD / internal
-COLD_DIR = BASE_DIR / "music_cold" # External HDD
-HOT_DIR.mkdir(exist_ok=True)
-COLD_DIR.mkdir(exist_ok=True)
-
-# Update Track model if needed - add location column via migration-like
-# For simplicity, file_path already tracks location
-
-@app.websocket("/ws/controls")
-async def websocket_controls(websocket: WebSocket):
-    await manager.connect(websocket)
-    try:
-        while True:
-            data = await websocket.receive_json()
-            # Broadcast play/pause/seek/next to all devices
-            await manager.broadcast({"type": "control", "action": data.get("action"), "payload": data.get("payload")})
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-@app.get("/api/recommendations")
-def get_recommendations(db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    # Hybrid: top played + similar by genre/artist from history
-    top = db.query(Track).order_by(Track.play_count.desc()).limit(30).all()
-    recent_history = db.query(PlayHistory).order_by(PlayHistory.played_at.desc()).limit(20).all()
-    listened_ids = {h.track_id for h in recent_history}
-    # Simple filter: prefer tracks user has some history with or high play
-    recs = [t for t in top if t.id in listened_ids or t.play_count > 0][:15]
-    if not recs:
-        recs = top[:15]
-    return {
-        "for_you": [{"id": t.id, "title": t.title, "artist": t.artist, "genre": t.genre, "duration": t.duration, "play_count": t.play_count} for t in recs],
-        "listened_filter": True
-    }
-
-@app.get("/api/search")
-def search(q: str, filter_listened: bool = True, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    q_obj = db.query(Track).filter(
-        (Track.title.ilike(f"%{q}%")) | (Track.artist.ilike(f"%{q}%")) | (Track.album.ilike(f"%{q}%"))
-    )
-    if filter_listened:
-        # Prioritize tracks with play history
-        listened = db.query(PlayHistory.track_id).distinct().subquery()
-        q_obj = q_obj.outerjoin(listened, Track.id == listened.c.track_id).order_by(listened.c.track_id.isnot(None).desc(), Track.play_count.desc())
-    tracks = q_obj.limit(40).all()
-    return [{"id": t.id, "title": t.title, "artist": t.artist, "album": t.album, "genre": t.genre, "duration": t.duration, "play_count": t.play_count} for t in tracks]
-
-@app.get("/api/autofill")
-def autofill(q: str, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    """Suggestions based on recommendations and partial match, filtered by listened."""
-    if len(q) < 1:
-        return []
-    results = search(q, filter_listened=True, db=db, user=user)
-    return [{"label": f"{t['title']} — {t['artist']}", "id": t["id"], "title": t["title"], "artist": t["artist"]} for t in results[:10]]
-
-@app.post("/api/sort-storage")
-def sort_storage(hot_threshold: int = 5, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    """Move frequently played tracks to HOT (SSD), rare ones to COLD (external)."""
-    tracks = db.query(Track).all()
-    moved = {"hot": 0, "cold": 0}
-    for t in tracks:
-        current = Path(t.file_path)
-        if not current.exists():
-            continue
-        target_dir = HOT_DIR if t.play_count >= hot_threshold else COLD_DIR
-        target = target_dir / current.name
-        if current.parent != target_dir and not target.exists():
-            try:
-                shutil.move(str(current), str(target))
-                t.file_path = str(target)
-                moved["hot" if target_dir == HOT_DIR else "cold"] += 1
-            except Exception as e:
-                print(f"Move failed for {current}: {e}")
-    db.commit()
-    return {"moved": moved, "hot_threshold": hot_threshold}
-
-# Enhance stream for partial/incomplete files (range requests already supported)
-# Existing stream_file handles ranges; add note that clients can start playback early.
-
-# Add login page simple
-@app.get("/login", response_class=HTMLResponse)
-def login_page():
-    return """
-    <form method="get" action="/">
-      <h2>MusicStream Login</h2>
-      <p>Use browser basic auth or enter below (demo).</p>
-      <input name="user" placeholder="admin"><br>
-      <input name="pass" type="password" placeholder="password"><br>
-      <button>Login</button>
-    </form>
-    <script>
-      // Browser will prompt for basic auth on protected endpoints
-    </script>
-    """
-
 # Protect main routes with Depends(get_current_user) where appropriate
 # Note: For full protection, wrap more endpoints. For demo, search/recs are protected.
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
@@ -161,6 +66,10 @@ DB_PATH = DATA_DIR / "music.db"
 MUSIC_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
+HOT_DIR = BASE_DIR / "music_hot"
+COLD_DIR = BASE_DIR / "music_cold"
+HOT_DIR.mkdir(exist_ok=True)
+COLD_DIR.mkdir(exist_ok=True)
 
 # Database
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
@@ -216,6 +125,16 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+@app.websocket("/ws/controls")
+async def websocket_controls(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await manager.broadcast({"type": "control", "action": data.get("action"), "payload": data.get("payload")})
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 # Helpers
 def extract_metadata(file_path: Path):
@@ -562,9 +481,12 @@ def search_from_phone(q: str, db: Session = Depends(get_db)):
         (Track.title.ilike(f"%{q}%")) | (Track.artist.ilike(f"%{q}%"))
     ).limit(30).all()
     return [{"id": t.id, "title": t.title, "artist": t.artist, "album": t.album} for t in tracks]
+
+
+if __name__ == "__main__":
     import uvicorn
-    # Initial scan
     db = SessionLocal()
     scan_library(db)
     db.close()
+    print("MusicStream is on http://0.0.0.0:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
