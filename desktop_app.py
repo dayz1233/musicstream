@@ -14,6 +14,7 @@ from tkinter import scrolledtext, messagebox, filedialog
 from pathlib import Path
 import updater
 import webbrowser
+import socket
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -24,6 +25,17 @@ except ImportError:
 
 BASE_DIR = Path(__file__).parent
 SERVER_PROCESS = None
+
+
+def lan_address():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("192.168.4.1", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
 
 class MusicStreamApp:
     def __init__(self, root):
@@ -196,7 +208,22 @@ class MusicStreamApp:
         if SERVER_PROCESS and SERVER_PROCESS.poll() is None:
             self.log_message("Server is already running.")
             return
-        self.log_message("Starting backend server...")
+        threading.Thread(target=self._start_server, daemon=True).start()
+
+    def _start_server(self):
+        global SERVER_PROCESS
+        self.root.after(0, lambda: self.log_message("Installing missing Python packages..."))
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "tkinterdnd2"],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "pip failed").strip()[-800:]
+            self.root.after(0, lambda detail=detail: self.log_message("Package install failed: " + detail))
+            return
+        self.root.after(0, lambda: self.log_message("Packages ready. Starting server..."))
         try:
             SERVER_PROCESS = subprocess.Popen(
                 [sys.executable, "main.py"],
@@ -207,9 +234,13 @@ class MusicStreamApp:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             )
             threading.Thread(target=self.stream_server_output, daemon=True).start()
-            self.log_message("Server process started. Waiting for it to come up...")
-        except Exception as e:
-            self.log_message(f"Failed to start server: {e}")
+            address = lan_address()
+            self.root.after(0, lambda address=address: self.log_message(
+                "Other computers on this Wi-Fi can open http://" + address + ":8000"
+            ))
+        except Exception as exc:
+            message = str(exc)
+            self.root.after(0, lambda message=message: self.log_message("Failed to start server: " + message))
 
     def stream_server_output(self):
         if not SERVER_PROCESS:
@@ -247,9 +278,12 @@ class MusicStreamApp:
 
     def _run_update(self, manual):
         try:
-            result = updater.check_and_apply(log=lambda m: self.root.after(0, lambda: self.log_message(m)))
+            result = updater.check_and_apply(
+                log=lambda m: self.root.after(0, lambda m=m: self.log_message(m))
+            )
         except Exception as exc:
-            self.root.after(0, lambda: self.log_message(f"Update failed: {exc}"))
+            message = str(exc)
+            self.root.after(0, lambda message=message: self.log_message("Update failed: " + message))
             return
         def finish():
             if not result.get("ok"):
