@@ -508,6 +508,42 @@ def media_browser_search(title: str, artist: str = "", delay: float = 1.5):
     return result
 
 
+@app.post("/api/media-browser/sequence/click")
+def media_browser_record_click():
+    result = media_browser.call("record-click", timeout=90)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Click was not recorded")
+    return result
+
+
+@app.post("/api/media-browser/sequence/step")
+def media_browser_add_step(action: str, text: str = "", key: str = "", seconds: float = 1):
+    result = media_browser.call("add-step", {"action": action, "text": text, "key": key, "seconds": seconds})
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Step was not added")
+    return result
+
+
+@app.post("/api/media-browser/sequence/save")
+def media_browser_save_sequence(name: str):
+    result = media_browser.call("save-sequence", {"name": name})
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Sequence was not saved")
+    return result
+
+
+@app.post("/api/media-browser/sequence/run")
+def media_browser_run_sequence(name: str, title: str = "", artist: str = "", query: str = ""):
+    result = media_browser.call(
+        "run-sequence",
+        {"name": name, "title": title, "artist": artist, "query": query},
+        timeout=120,
+    )
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Sequence failed")
+    return result
+
+
 @app.post("/api/verify-playlist")
 def verify_against_playlist(track_title: str, artist: str, playlist_file: Optional[str] = None):
     """Verify a track against a Spotify recommendation playlist file (JSON/CSV)."""
