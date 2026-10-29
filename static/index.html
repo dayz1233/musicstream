@@ -802,7 +802,7 @@ showHome = async function () {
     const lists = (await fetchJSON('/api/playlists').catch(() => [])).filter(list => list.count > 0);
     let data = { for_you: [], recently_added: [] };
     try { data = await fetchJSON('/api/recommendations'); } catch (err) { /* library can be empty */ }
-    let html = '<button class="dice-btn" onclick="rollDice()">Roll the dice</button>';
+    let html = '<button class="dice-btn" onclick="rollDice()">Roll the dice</button> <button class="dice-btn" onclick="showPresets()">Media server</button>';
     if (lists.length) {
       html += '<h1 class="section-title">Your playlists</h1><div class="playlist-grid">';
       lists.forEach(list => {
