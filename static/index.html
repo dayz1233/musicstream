@@ -327,7 +327,7 @@ function escape(s) { return (s||'').replace(/'/g, "\\'"); }
 async function showSearch() {
   setActive('Search');
   document.getElementById('content').innerHTML = `
-    <input class="search-bar" placeholder="Search songs, artists, albums..." oninput="doSearch(this.value)">
+    <input class="search-bar" placeholder="Search your library. Press Enter to get a missing song." oninput="doSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault(); commitSearch(this.value)}">
     <div id="search-results"></div>
   `;
 }
@@ -654,6 +654,8 @@ async function playByName(title, artist, track) {
     await playTrack(match.id, match.title, match.artist);
     return true;
   }
+  const downloaded = await downloadMissing(title, artist);
+  if (downloaded) return true;
   if (match.preview) {
     currentTrack = { title, artist, preview: true };
     audio.src = match.preview;
@@ -668,6 +670,45 @@ async function playByName(title, artist, track) {
   }
   document.querySelector('#now-playing .artist').textContent = 'No audio file for this song yet';
   return false;
+}
+
+let mediaJob = null;
+
+async function downloadMissing(title, artist) {
+  const query = [artist, title].filter(Boolean).join(' ').trim();
+  if (!query) return false;
+  if (!mediaJob) {
+    document.querySelector('#now-playing .artist').textContent = 'Not downloaded. Running the recorded steps on the laptop...';
+    const params = new URLSearchParams({ query, title: title || '', artist: artist || '' });
+    mediaJob = fetch('/api/media-browser/fetch?' + params.toString(), { method: 'POST' })
+      .then(response => response.json())
+      .finally(() => { mediaJob = null; });
+  }
+  const data = await mediaJob;
+  if (!data.ok) {
+    document.querySelector('#now-playing .artist').textContent = data.detail || data.error || 'The media server steps did not finish';
+    return false;
+  }
+  const again = await fetchJSON(`/api/match?title=${encodeURIComponent(title || query)}&artist=${encodeURIComponent(artist || '')}`);
+  if (!again.found) {
+    document.querySelector('#now-playing .artist').textContent = 'Downloaded, but it did not match this song';
+    return false;
+  }
+  await playTrack(again.id, again.title, again.artist);
+  return true;
+}
+
+async function commitSearch(q) {
+  const query = (q || '').trim();
+  if (query.length < 2) return;
+  const tracks = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}`);
+  const exact = (tracks || []).find(track => (track.title || '').toLowerCase() === query.toLowerCase());
+  if (exact) {
+    playTrack(exact.id, exact.title, exact.artist);
+    return;
+  }
+  await downloadMissing(query, '');
+  doSearch(query);
 }
 
 function dedupeTracks(tracks) {
