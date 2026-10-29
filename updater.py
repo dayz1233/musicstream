@@ -2,12 +2,14 @@
 import hashlib
 import json
 import os
+import time
 import urllib.request
 from pathlib import Path
 
 BASE = Path(__file__).parent
 VERSION_FILE = BASE / "VERSION"
 CONFIG = BASE / "data" / "update.json"
+APPLIED = BASE / "data" / "applied_version"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/dayz1233/musicstream/main/update-manifest.json"
 PROTECTED_PREFIXES = (
     "data/",
@@ -45,12 +47,38 @@ def save_url(url: str) -> None:
     CONFIG.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
+def normalized(data: bytes) -> bytes:
+    return data.replace(b"\r\n", b"\n")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256_bytes(path.read_bytes())
+
+
+def same_bytes(path: Path, want: str) -> bool:
+    """True when the file matches, including Windows CRLF vs LF."""
+    if not path.is_file() or not want:
+        return False
+    raw = path.read_bytes()
+    want = want.lower()
+    return sha256_bytes(raw) == want or sha256_bytes(normalized(raw)) == want
+
+
+def applied_version() -> str:
+    if not APPLIED.exists():
+        return ""
+    return normalized(APPLIED.read_bytes()).decode("utf-8", "replace").strip()
+
+
+def mark_applied(version: str) -> None:
+    if not version:
+        return
+    APPLIED.parent.mkdir(exist_ok=True)
+    APPLIED.write_bytes((version.strip() + "\n").encode("utf-8"))
 
 
 def allowed(rel: str) -> bool:
@@ -65,12 +93,20 @@ def allowed(rel: str) -> bool:
 
 
 def _get(url: str, timeout: int):
-    request = urllib.request.Request(url, headers={"User-Agent": "MusicStream-Updater"})
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "MusicStream-Updater",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
+    )
     return urllib.request.urlopen(request, timeout=timeout)
 
 
 def fetch_json(url: str) -> dict:
-    with _get(url, 30) as response:
+    fresh = url + ("&" if "?" in url else "?") + "t=" + str(int(time.time()))
+    with _get(fresh, 30) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -102,17 +138,19 @@ def check_and_apply(url=None, log=print) -> dict:
             continue
         dest = BASE / rel
         want = str(item.get("sha256") or "").lower()
-        have = sha256_file(dest) if dest.is_file() else ""
-        if want and have == want:
+        if same_bytes(dest, want):
             continue
         file_url = item.get("url")
         if not file_url:
             continue
         log(f"downloading {rel}")
         download(file_url, dest)
-        if want and sha256_file(dest).lower() != want:
+        if want and not same_bytes(dest, want):
             raise RuntimeError(f"hash mismatch for {rel}")
         changed.append(rel)
     if remote:
-        VERSION_FILE.write_text(remote + "\n", encoding="utf-8")
+        payload = (remote.strip() + "\n").encode("utf-8")
+        current = VERSION_FILE.read_bytes() if VERSION_FILE.exists() else b""
+        if normalized(current) != payload:
+            VERSION_FILE.write_bytes(payload)
     return {"ok": True, "local": local, "remote": remote, "changed": changed}
