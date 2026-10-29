@@ -1,75 +1,75 @@
 {
-  "version": "1.1.11",
+  "version": "1.1.12",
   "files": [
     {
       "path": "ANDROID_AND_PRESETS.md",
       "sha256": "e287273dba9591a7670bf35e5790d6f9bde454162e48f2c80507c14c5bb7eb6e",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/ANDROID_AND_PRESETS.md"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/ANDROID_AND_PRESETS.md"
     },
     {
       "path": "README-SIMPLE.md",
       "sha256": "1d82d5022f4c3e73f015c1974c249000c3b7d8f269b4b0e869b386d3b4e2a97f",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/README-SIMPLE.md"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/README-SIMPLE.md"
     },
     {
       "path": "README.md",
       "sha256": "c212e3bdb14e0b7ec08d38c280bb04a92e22baa66bac4bf9e797e92be39cc00e",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/README.md"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/README.md"
     },
     {
       "path": "VERSION",
-      "sha256": "75fe54d226c17e2ffce72aca63fa1e5066db0d41560e8b6dd746b2361b82574e",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/VERSION"
+      "sha256": "d343770461504b96bbf75486480dcc6840092fe6e29d3e56063b486efb42d819",
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/VERSION"
     },
     {
       "path": "automation/automator.py",
       "sha256": "3a46b407a021a46c93b6996bb2963e68a8318c1d04d0eeb44afb9eb1f95cb474",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/automation/automator.py"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/automation/automator.py"
     },
     {
       "path": "automation/media_browser.py",
       "sha256": "2bb1febb75708b415c0fc67ce8aa139c4f7d81026a7e9f5e0593019186814d79",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/automation/media_browser.py"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/automation/media_browser.py"
     },
     {
       "path": "automation/validator.py",
       "sha256": "bb62aca4bd5c5f7da34cf0d25c7bbb59a1ad99007bee076cad3e01680afe374c",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/automation/validator.py"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/automation/validator.py"
     },
     {
       "path": "desktop_app.py",
-      "sha256": "e0b47b90e0c585a1e25ef585e30a8c8ddc3a42ea0d6fcc5fee63a53c3f39ef1d",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/desktop_app.py"
+      "sha256": "5e9b43756893d4873f3b0d4e1d07922f72896566c4c45b04228e9a076791e089",
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/desktop_app.py"
     },
     {
       "path": "main.py",
       "sha256": "27c268bfa149bca78c1daed801b573da6952b39f396bf2cb1ac5883f728ff7e5",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/main.py"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/main.py"
     },
     {
       "path": "requirements.txt",
       "sha256": "033ab1809f81f5ec4c14f283294363ecf360612a37334c7e95f38fc949fa7727",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/requirements.txt"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/requirements.txt"
     },
     {
       "path": "start.bat",
       "sha256": "0f2e745ccc41519fcc65b1f29a70a488b0285892bc45621b84653fb981625869",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/start.bat"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/start.bat"
     },
     {
       "path": "start.sh",
       "sha256": "ad21c595e84554c639a5c7a6eee2a54ef2cbf0e229ac84885375aef16709d4eb",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/start.sh"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/start.sh"
     },
     {
       "path": "static/index.html",
-      "sha256": "820674045483185ea62c6a24cdcc40407b8d1dc1d1c2af8745178ba042860eb0",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/static/index.html"
+      "sha256": "cbe3176a421b65b56c6a55852978baef1544f573351552bb4a16c71935c60f96",
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/static/index.html"
     },
     {
       "path": "updater.py",
       "sha256": "f3da82fd173497c3c99004ceb9169c55e624a42e2a38fb8e504ab399fba27f91",
-      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/59c3f83415e5aa57a5c55b88f4c296b7416b53eb/updater.py"
+      "url": "https://raw.githubusercontent.com/dayz1233/musicstream/ca760e951e336eab0aafbb128c6abab74fea2242/updater.py"
     }
   ]
 }
