@@ -18,6 +18,7 @@ PROFILE = BASE / "data" / "chrome-media-window"
 DEBUG_PORT = 9333
 IDLE_SECONDS = 20
 DEFAULT_GAPS = {"open": 2.0, "click": 0.4, "scroll": 0.3, "type": 0.6, "key": 0.4, "download": 120.0}
+CHROME_WINDOW = {"x": 40, "y": 40, "width": 1280, "height": 800}
 
 
 class TrafficWatch:
@@ -181,6 +182,7 @@ class ClickSteps:
                 "next": self.next_message,
                 "delay": self.delay,
                 "gaps": dict(self.gaps),
+                "window": dict(CHROME_WINDOW),
             }
 
     def _public_step(self, number, step) -> dict:
@@ -199,7 +201,15 @@ class ClickSteps:
         name = (step.get("name") or "").strip()
         if name:
             label = name
-        return {"step": number, "action": label, "kind": step.get("action") or "click", "wait": round(float(step.get("wait", 0.4)), 2), "name": name}
+        return {
+            "step": number,
+            "action": label,
+            "kind": step.get("action") or "click",
+            "wait": round(float(step.get("wait", 0.4)), 2),
+            "name": name,
+            "x": step.get("x"),
+            "y": step.get("y"),
+        }
 
     def note(self, message: str, nxt: str = ""):
         with self.lock:
@@ -273,6 +283,21 @@ class ClickSteps:
         self._save()
         self.note(f"Updated {updated} steps.", "")
         return self.status()
+
+    def move_step(self, index: int, x: int, y: int) -> dict:
+        try:
+            index = int(index)
+            x = int(x)
+            y = int(y)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "That point could not be moved."}
+        with self.lock:
+            if index < 1 or index > len(self.steps):
+                return {"ok": False, "error": "That step is not in the list."}
+            self.steps[index - 1]["x"] = x
+            self.steps[index - 1]["y"] = y
+        self._save()
+        return {"ok": True, "message": f"Moved step {index} to {x}, {y}."}
 
     def estop(self) -> dict:
         self.abort = True
@@ -361,8 +386,8 @@ class ClickSteps:
                 "--disable-extensions",
                 "--no-first-run",
                 "--disable-session-crashed-bubble",
-                "--window-position=40,40",
-                "--window-size=1280,800",
+                f"--window-position={CHROME_WINDOW['x']},{CHROME_WINDOW['y']}",
+                f"--window-size={CHROME_WINDOW['width']},{CHROME_WINDOW['height']}",
                 f"--remote-debugging-port={DEBUG_PORT}",
             ]
             if url:
