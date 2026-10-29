@@ -57,12 +57,17 @@ class MusicStreamApp:
         shell.bind("<Configure>", lambda event: shell.itemconfig(body_id, width=event.width))
         body.bind("<Configure>", lambda _event: shell.configure(scrollregion=shell.bbox("all")))
 
+        self.menu_shell = shell
+
         def wheel(event):
             if event.widget in (getattr(self, "log", None), getattr(self, "step_list", None)):
                 return
-            shell.yview_scroll(int(-event.delta / 120) or (-1 if event.delta > 0 else 1), "units")
+            steps = int(event.delta / 120) or (1 if event.delta > 0 else -1)
+            shell.yview_scroll(-steps, "units")
 
         self.root.bind_all("<MouseWheel>", wheel)
+        self.root.bind_all("<Next>", lambda _event: shell.yview_scroll(6, "units"))
+        self.root.bind_all("<Prior>", lambda _event: shell.yview_scroll(-6, "units"))
         root = body
 
         # Header
