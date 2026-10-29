@@ -382,53 +382,52 @@ async function showGenre(genre) {
 
 async function showPresets() {
   setActive('Presets');
-  const browser = await fetchJSON('/api/media-browser').catch(() => ({ url: '', ready: false, open: false }));
-  let html = `<h1 class="section-title">Media server</h1>
-    <p style="color:var(--text-sub);margin-bottom:16px">Clicks and typing stay inside that Chrome window on the laptop running MusicStream. They are not screen coordinates, so your resolution and window size do not matter. The window opens on the laptop, even if you press this from another computer.</p>
-    <input class="search-bar" id="media-url" placeholder="Media server address, https://..." value="${attr(browser.url || '')}">
+  const browser = await fetchJSON('/api/media-browser').catch(() => ({ url: '', steps: [] }));
+  const lines = (browser.steps || []).map(step => `Step ${step.step}: ${step.action}`).join('\n') || 'No steps yet';
+  document.getElementById('content').innerHTML = `<h1 class="section-title">Media server</h1>
+    <p style="color:var(--text-sub);margin-bottom:16px">Opens a normal Chrome tab and uses the real mouse and keyboard. Each click becomes the next step. The first place you type is remembered as the search bar. Keep the Chrome window in the same place, because the steps are screen positions.</p>
+    <input class="search-bar" id="media-url" placeholder="Media server address" value="${attr(browser.url || '')}">
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
       <button class="dice-btn" onclick="openMediaBrowser()">Open media browser</button>
-      <button class="dice-btn" onclick="recordPart('search_field')">Record search field</button>
-      <button class="dice-btn" onclick="recordPart('search_button')">Record search button</button>
-      <button class="dice-btn" onclick="recordPart('results')">Record results area</button>
-      <button class="dice-btn" onclick="recordPart('result')">Record a result</button>
-      <button class="dice-btn" onclick="recordPart('download')">Record download</button>
-      <button class="dice-btn" onclick="recordPart('extra')">Record next step</button>
-      <button class="dice-btn" onclick="clearRecording()">Clear recording</button>
+      <button class="dice-btn" onclick="stopRecording()">Stop</button>
+      <button class="dice-btn" onclick="clearRecording()">Clear</button>
     </div>
-    <p id="media-status" style="color:var(--text-sub);margin-bottom:20px">Open the media server, then press each record button and click that part of the page. No typing is required. A search in this player then runs those steps, checks the file, and adds it to the library.</p>
-    <h2 class="section-title">System-wide mouse</h2>
-    <p style="color:var(--text-sub);margin-bottom:16px">This older option moves the real mouse. Screen resolution and window position change the coordinates. Prefer the Chrome sequence above.</p>`;
-  const sequences = await fetchJSON('/api/automation/sequences').catch(() => []);
-  html += `<div style="margin-bottom:20px">
-      <input class="search-bar" id="seq-name" placeholder="Sequence name">
-      <button onclick="startRecording()" style="background:#444;color:#fff;border:none;padding:8px 16px;border-radius:20px;margin-right:8px">Record Position</button>
-      <button onclick="saveSequence()" style="background:var(--accent);color:#000;border:none;padding:8px 16px;border-radius:20px;font-weight:600">Save Sequence</button>
-    </div>
-    <div id="recorded-steps" style="background:#1a1a1a;padding:12px;border-radius:8px;margin-bottom:20px;font-family:monospace;font-size:13px;min-height:40px">No steps recorded yet</div>`;
-  document.getElementById('content').innerHTML = html;
+    <pre id="media-status" style="color:var(--text-sub);white-space:pre-wrap">${attr(lines)}</pre>`;
+  if (browser.recording) pollMediaSteps();
 }
 
-async function recordPart(part) {
+async function openMediaBrowser() {
+  const field = document.getElementById('media-url');
+  const url = field ? field.value.trim() : '';
   const status = document.getElementById('media-status');
-  const labels = {
-    search_field: 'Click the search field in the media Chrome window.',
-    search_button: 'Click the search button in the media Chrome window.',
-    results: 'Click the results area in the media Chrome window.',
-    result: 'Click one search result in the media Chrome window.',
-    download: 'Click the download button in the media Chrome window.',
-    extra: 'Click the next step in the media Chrome window.'
-  };
-  if (status) status.textContent = labels[part] || 'Click in the media Chrome window.';
-  const response = await fetch('/api/media-browser/record?part=' + encodeURIComponent(part), { method: 'POST' });
+  if (status) status.textContent = 'Opening a normal Chrome tab. Click through the site. The first place you type becomes the search bar.';
+  const response = await fetch('/api/media-browser/open?url=' + encodeURIComponent(url), { method: 'POST' });
   const data = await response.json();
-  if (status) status.textContent = data.ok ? ('Saved. ' + JSON.stringify(data.recipe)) : (data.detail || 'That click was not recorded');
+  if (!data.ok) {
+    alert(data.detail || data.error || 'Could not open Chrome');
+    return;
+  }
+  pollMediaSteps();
+}
+
+async function pollMediaSteps() {
+  const status = document.getElementById('media-status');
+  if (!status) return;
+  const data = await fetchJSON('/api/media-browser').catch(() => null);
+  if (!data) return;
+  status.textContent = (data.steps || []).map(step => `Step ${step.step}: ${step.action}`).join('\n') || 'No steps yet';
+  if (data.recording) setTimeout(pollMediaSteps, 700);
+}
+
+async function stopRecording() {
+  await fetch('/api/media-browser/stop', { method: 'POST' });
+  pollMediaSteps();
 }
 
 async function clearRecording() {
   await fetch('/api/media-browser/clear', { method: 'POST' });
   const status = document.getElementById('media-status');
-  if (status) status.textContent = 'Recording cleared.';
+  if (status) status.textContent = 'No steps yet';
 }
 
 async function fetchQuery(query) {
@@ -440,48 +439,6 @@ async function fetchQuery(query) {
   const message = data.ok ? ('Added ' + data.saved) : (data.detail || data.error || 'The download did not finish');
   if (note) note.textContent = message;
   else alert(message);
-}
-
-async function openMediaBrowser() {
-  const field = document.getElementById('media-url');
-  const url = field ? field.value.trim() : '';
-  const status = document.getElementById('media-status');
-  if (status) status.textContent = 'Opening Chrome on the laptop that runs MusicStream...';
-  try {
-    const response = await fetch('/api/media-browser/open?url=' + encodeURIComponent(url === 'https://' ? '' : url), { method: 'POST' });
-    const data = await response.json();
-    const message = data.ok ? 'Chrome is open on the laptop. If you had closed it, it was started again.' : (data.detail || data.error || 'Could not open Chrome');
-    if (status) status.textContent = message;
-    if (!data.ok) alert(message);
-  } catch (err) {
-    if (status) status.textContent = err.message;
-    alert(err.message);
-  }
-}
-
-async function armMediaBrowser() {
-  const status = document.getElementById('media-status');
-  status.textContent = 'Click the search box in the media Chrome window now.';
-  const response = await fetch('/api/media-browser/arm', { method: 'POST' });
-  const data = await response.json();
-  status.textContent = data.ok ? 'Search box remembered. Requests will be typed there.' : (data.detail || 'The search box was not selected');
-}
-
-async function askMediaBrowser() {
-  const track = activeTrack || {};
-  if (!track.title) {
-    alert('Pick a song first.');
-    return;
-  }
-  const status = document.getElementById('media-status');
-  if (status) status.textContent = 'Typing a cleaned search for ' + track.title + '...';
-  document.querySelector('#now-playing .artist').textContent = 'Typing into the media browser...';
-  const params = new URLSearchParams({ title: track.title, artist: track.artist || '', delay: '1.5' });
-  const response = await fetch('/api/media-browser/search?' + params.toString(), { method: 'POST' });
-  const data = await response.json();
-  const message = data.ok ? ('Found ' + (data.matched || track.title)) : (data.detail || data.error || 'No match');
-  document.querySelector('#now-playing .artist').textContent = message;
-  if (status) status.textContent = message;
 }
 
 let recordedSteps = [];
