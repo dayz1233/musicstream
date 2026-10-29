@@ -107,6 +107,14 @@ class MusicStreamApp:
                   bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
         tk.Button(media_row, text="Clear", command=self.clear_media_recording,
                   bg="#c45c4a", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
+        gap_row = tk.Frame(root, bg="#1a1a1a")
+        gap_row.pack(fill="x", padx=20, pady=4)
+        tk.Label(gap_row, text="Seconds between actions", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
+        self.action_gap = tk.Entry(gap_row, width=6, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
+        self.action_gap.pack(side="left", padx=8)
+        self.action_gap.insert(0, "0.8")
+        tk.Button(gap_row, text="Save", command=self.save_action_gap,
+                  bg="#333", fg="white", relief="flat", padx=10).pack(side="left")
 
         # Status / process log
         tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
@@ -143,6 +151,11 @@ class MusicStreamApp:
                 message = str(exc)
                 self.root.after(0, lambda message=message: self.log_message("Media browser failed: " + message))
         threading.Thread(target=work, daemon=True).start()
+
+    def save_action_gap(self):
+        seconds = self.action_gap.get().strip() or "0.8"
+        self.log_message(f"Wait between actions set to {seconds} seconds.")
+        self.post_local("/api/media-browser/delay", {"seconds": seconds})
 
     def open_media_browser(self):
         self.media_seen = 0
