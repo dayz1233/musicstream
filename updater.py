@@ -8,6 +8,7 @@ from pathlib import Path
 BASE = Path(__file__).parent
 VERSION_FILE = BASE / "VERSION"
 CONFIG = BASE / "data" / "update.json"
+DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/dayz1233/musicstream/main/update-manifest.json"
 PROTECTED_PREFIXES = (
     "data/",
     "music/",
@@ -25,12 +26,16 @@ def local_version() -> str:
 
 
 def load_config() -> dict:
+    cfg = {"url": DEFAULT_UPDATE_URL}
     if not CONFIG.exists():
-        return {"url": ""}
+        return cfg
     try:
-        return json.loads(CONFIG.read_text(encoding="utf-8"))
+        loaded = json.loads(CONFIG.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"url": ""}
+        return cfg
+    if loaded.get("url"):
+        cfg["url"] = loaded["url"].strip()
+    return cfg
 
 
 def save_url(url: str) -> None:
