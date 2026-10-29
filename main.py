@@ -512,6 +512,14 @@ def media_browser_delay(seconds: float):
     return result
 
 
+@app.post("/api/media-browser/gap")
+def media_browser_gap(action: str, seconds: float):
+    result = click_steps.set_gap(action, seconds)
+    if not result.get("ok", True):
+        raise HTTPException(400, result.get("error") or "Could not save that wait")
+    return result
+
+
 @app.post("/api/media-browser/fetch")
 def media_browser_fetch(query: str = "", title: str = "", artist: str = "", delay: Optional[float] = None, db: Session = Depends(get_db)):
     text = query or f"{artist} {title}".strip()
@@ -533,12 +541,8 @@ def media_browser_fetch(query: str = "", title: str = "", artist: str = "", dela
             click_steps.note(last_error, "Trying again." if attempt < 3 else "Stopped after 3 tries.")
             continue
         downloaded = None
-        deadline = time.time() + 180
+        deadline = time.time() + click_steps.gap_for("download")
         while time.time() < deadline:
-            if click_steps.idle():
-                last_error = "The page was only doing background traffic, so I closed it."
-                click_steps.note(last_error, "Trying again." if attempt < 3 else "Stopped after 3 tries.")
-                break
             downloaded = validator.wait_for_download(timeout=5, started_at=started)
             if downloaded:
                 break
