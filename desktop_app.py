@@ -208,12 +208,15 @@ class MusicStreamApp:
                 if manual:
                     self.log_message("Set an update URL first. Only changed program files are downloaded.")
                 return
-            changed = result.get("changed") or []
-            if not changed:
-                self.log_message(f"Up to date ({result.get('remote') or updater.local_version()}).")
+            changed = [c for c in (result.get("changed") or []) if c.replace("\\", "/") != "VERSION"]
+            remote = str(result.get("remote") or "")
+            if not changed or (remote and updater.applied_version() == remote):
+                updater.mark_applied(remote)
+                self.log_message(f"Up to date ({remote or updater.local_version()}).")
                 return
             self.log_message("Updated: " + ", ".join(changed))
-            self.log_message("Restarting to use the new version.")
+            self.log_message("Restarting once to use the new version.")
+            updater.mark_applied(remote)
             self.stop_server()
             os.environ["MUSICSTREAM_AUTOSTART"] = "1"
             os.execv(sys.executable, [sys.executable, str(BASE_DIR / "desktop_app.py")])
