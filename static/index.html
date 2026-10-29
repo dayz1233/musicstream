@@ -21,11 +21,12 @@ body {
   background: var(--bg);
   color: var(--text);
   height: 100vh;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-#app { display: flex; flex: 1; overflow: hidden; }
+#app { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 #sidebar {
   width: 240px;
   background: #000;
@@ -112,7 +113,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 90px;
+  height: 118px;
   background: #181818;
   border-top: 1px solid #282828;
   display: grid;
@@ -130,7 +131,19 @@ body {
 }
 #now-playing .title { font-weight: 600; font-size: 14px; }
 #now-playing .artist { font-size: 12px; color: var(--text-sub); }
-#controls { display: flex; align-items: center; justify-content: center; gap: 12px; }
+#controls { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+#transport { display: flex; align-items: center; justify-content: center; gap: 12px; }
+#modes { display: flex; gap: 6px; }
+.mode-btn {
+  background: #2a2a2a;
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mode-btn.active { background: var(--accent); color: #000; font-weight: 700; }
 .ctrl-btn {
   background: none;
   border: none;
@@ -209,9 +222,16 @@ input[type="file"] { display: none; }
     <div class="artist">—</div>
   </div>
   <div id="controls">
-    <button class="ctrl-btn" onclick="prevTrack()">⏮</button>
-    <button class="ctrl-btn" id="play-btn" onclick="togglePlay()">Play</button>
-    <button class="ctrl-btn" onclick="nextTrack()">⏭</button>
+    <div id="transport">
+      <button class="ctrl-btn" onclick="prevTrack()">Prev</button>
+      <button class="ctrl-btn play" id="play-btn" onclick="togglePlay()">Play</button>
+      <button class="ctrl-btn" onclick="nextTrack()">Next</button>
+    </div>
+    <div id="modes">
+      <button type="button" class="mode-btn" data-mode="order" onclick="setMode('order')">In order</button>
+      <button type="button" class="mode-btn" data-mode="shuffle" onclick="setMode('shuffle')">Shuffle</button>
+      <button type="button" class="mode-btn" data-mode="recommend" onclick="setMode('recommend')">For you</button>
+    </div>
   </div>
   <div id="progress-container">
     <span id="time-current">0:00</span>
@@ -227,7 +247,12 @@ input[type="file"] { display: none; }
 const API = '';
 let currentTrack = null;
 let queue = [];
+let sourceTracks = [];
+let loadedTracks = [];
 let queueIndex = -1;
+let playMode = 'shuffle';
+let activeTrack = null;
+let loggedListen = false;
 let isPlaying = false;
 const audio = document.getElementById('audio');
 
@@ -316,20 +341,22 @@ async function showLibrary() {
   document.getElementById('content').innerHTML = html;
 }
 
-async function showGenre(genre) {
-  const tracks = await fetchJSON(`/api/tracks?genre=${encodeURIComponent(genre)}&limit=100`);
-  let html = `<h1 class="section-title">${genre}</h1><div class="track-list">`;
-  tracks.forEach((t, i) => { html += trackRow(t, i); });
-  html += `</div>`;
-  document.getElementById('content').innerHTML = html;
+async function loadGenres() {
+  const genres = await fetchJSON('/api/categories').catch(() => []);
+  const el = document.getElementById('genre-list');
+  el.innerHTML = genres.filter(genre => genre.count > 0).map(genre =>
+    `<div class="nav-item" onclick="showGenre('${escape(genre.name)}')">${attr(genre.name)}</div>`
+  ).join('');
 }
 
-async function loadGenres() {
-  const genres = await fetchJSON('/api/genres');
-  const el = document.getElementById('genre-list');
-  el.innerHTML = genres.map(g => 
-    `<div class="nav-item" onclick="showGenre('${escape(g)}')">${g}</div>`
-  ).join('');
+async function showGenre(genre) {
+  setActive('');
+  const data = await fetchJSON('/api/category/' + encodeURIComponent(genre));
+  loadedTracks = dedupeTracks(data.tracks || []);
+  let html = `<h1 class="section-title">${attr(genre)}</h1><div class="track-list">`;
+  loadedTracks.forEach(track => { html += playlistRow(track); });
+  html += '</div>';
+  document.getElementById('content').innerHTML = html || '<p>Nothing in this category.</p>';
 }
 
 async function showPresets() {
@@ -498,7 +525,13 @@ audio.ontimeupdate = () => {
   document.getElementById('progress-fill').style.width = pct + '%';
   document.getElementById('time-current').textContent = formatTime(audio.currentTime);
   document.getElementById('time-total').textContent = formatTime(audio.duration);
+  if (!loggedListen && audio.currentTime >= 30) {
+    loggedListen = true;
+    remember(activeTrack, 'play');
+  }
 };
+
+audio.onended = () => advance(false);
 
 function seek(e) {
   const bar = document.getElementById('progress-bar');
@@ -507,8 +540,16 @@ function seek(e) {
   audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
 }
 
-function nextTrack() {}
-function prevTrack() {}
+function nextTrack() { advance(true); }
+function prevTrack() {
+  if (audio.currentTime > 3) {
+    audio.currentTime = 0;
+    return;
+  }
+  if (!queue.length) return;
+  queueIndex = (queueIndex - 1 + queue.length) % queue.length;
+  playQueueIndex();
+}
 
 let ws;
 function connectControls() {
@@ -528,54 +569,170 @@ function sendControl(action, payload = {}) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({action, payload}));
 }
 
-async function playByName(title, artist) {
+async function playByName(title, artist, track) {
+  activeTrack = track || { title, artist, genres: '', album: '' };
+  loggedListen = false;
   document.querySelector('#now-playing .title').textContent = title || 'Unknown';
   document.querySelector('#now-playing .artist').textContent = 'Looking for audio...';
   const match = await fetchJSON(`/api/match?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`);
   if (match.found) {
     await playTrack(match.id, match.title, match.artist);
-    return;
+    return true;
   }
   if (match.preview) {
     currentTrack = { title, artist, preview: true };
     audio.src = match.preview;
     document.querySelector('#now-playing .artist').textContent = (artist || 'Unknown') + ' · 30 second preview';
-    await audio.play();
-    document.getElementById('play-btn').textContent = 'Pause';
-    return;
+    try {
+      await audio.play();
+      document.getElementById('play-btn').textContent = 'Pause';
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
   document.querySelector('#now-playing .artist').textContent = 'No audio file for this song yet';
+  return false;
 }
+
+function dedupeTracks(tracks) {
+  const seen = new Set();
+  const cleaned = [];
+  for (const track of tracks || []) {
+    const key = `${(track.title || '').trim().toLowerCase()}|${(track.artist || '').split(';')[0].trim().toLowerCase()}`;
+    if (!track.title || seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(track);
+  }
+  return cleaned;
+}
+
+function sameSong(a, b) {
+  if (!a || !b) return false;
+  const artist = value => (value.artist || '').split(';')[0].trim().toLowerCase();
+  return (a.title || '').trim().toLowerCase() === (b.title || '').trim().toLowerCase() && artist(a) === artist(b);
+}
+
+function sameArtist(a, b) {
+  const left = (a.artist || '').split(';')[0].trim().toLowerCase();
+  const right = (b.artist || '').split(';')[0].trim().toLowerCase();
+  return left && right && (left === right || left.includes(right) || right.includes(left));
+}
+
+function sameGenre(a, b) {
+  const genres = value => (value.genres || value.genre || '').toLowerCase().split(',').map(item => item.trim()).filter(Boolean);
+  const left = genres(a);
+  return left.some(genre => genres(b).includes(genre));
+}
+
+function shuffleTracks(tracks) {
+  const copy = tracks.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function setMode(mode) {
+  playMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(button => {
+    button.classList.toggle('active', button.dataset.mode === mode);
+  });
+  if (!sourceTracks.length) return;
+  const current = queue[queueIndex];
+  queue = mode === 'shuffle' ? shuffleTracks(sourceTracks) : sourceTracks.slice();
+  queueIndex = Math.max(0, queue.findIndex(track => sameSong(track, current)));
+}
+
+async function remember(track, kind) {
+  if (!track || !track.title) return;
+  const params = new URLSearchParams({
+    title: track.title,
+    artist: track.artist || '',
+    genres: track.genres || track.genre || '',
+    album: track.album || '',
+    kind,
+  });
+  await fetch('/api/listening?' + params.toString(), { method: 'POST' }).catch(() => {});
+}
+
+async function recommendIndex(current) {
+  const history = await fetchJSON('/api/listening?minutes=30').catch(() => ({ plays: [], skips: [] }));
+  const choices = queue.map((track, index) => {
+    if (index === queueIndex || sameSong(track, current)) return { index, score: 0 };
+    let score = 1;
+    if (sameArtist(track, current)) score += 4;
+    if (sameGenre(track, current)) score += 3;
+    if (track.album && track.album === current.album) score += 2;
+    for (const play of history.plays || []) {
+      if (sameArtist(track, play)) score += 3;
+      if (sameGenre(track, play)) score += 2;
+    }
+    for (const skip of history.skips || []) {
+      if (sameSong(track, skip)) score -= 8;
+      else if (sameArtist(track, skip)) score -= 4;
+      else if (sameGenre(track, skip)) score -= 2;
+    }
+    return { index, score: Math.max(score, 0) };
+  }).filter(choice => choice.score > 0);
+  if (!choices.length) return (queueIndex + 1) % queue.length;
+  const total = choices.reduce((sum, choice) => sum + choice.score, 0);
+  let roll = Math.random() * total;
+  for (const choice of choices) {
+    roll -= choice.score;
+    if (roll <= 0) return choice.index;
+  }
+  return choices[choices.length - 1].index;
+}
+
+async function playQueueIndex() {
+  const track = queue[queueIndex];
+  if (!track) return;
+  const started = await playByName(track.title, track.artist, track);
+  if (!started) setTimeout(() => advance(false), 600);
+}
+
+async function startPlaylist(tracks, startIndex) {
+  sourceTracks = dedupeTracks(tracks);
+  if (!sourceTracks.length) return;
+  const current = sourceTracks[Math.max(0, Math.min(startIndex, sourceTracks.length - 1))];
+  queue = playMode === 'shuffle' ? shuffleTracks(sourceTracks) : sourceTracks.slice();
+  queueIndex = Math.max(0, queue.findIndex(track => sameSong(track, current)));
+  await playQueueIndex();
+}
+
+async function advance(skipped) {
+  const current = activeTrack;
+  if (current) {
+    if (skipped && !loggedListen) await remember(current, 'skip');
+    else if (!loggedListen) await remember(current, 'play');
+  }
+  if (!queue.length) return;
+  if (playMode === 'recommend') queueIndex = await recommendIndex(current || {});
+  else queueIndex = (queueIndex + 1) % queue.length;
+  await playQueueIndex();
+}
+
+setMode(playMode);
 
 async function rollDice() {
   setActive('Home');
   const content = document.getElementById('content');
   content.innerHTML = '<h1 class="section-title">Rolling...</h1>';
-  const roll = await fetchJSON('/api/roll');
-  if (roll.kind === 'empty') {
+  const lists = (await fetchJSON('/api/playlists')).filter(list => list.count > 0);
+  if (!lists.length) {
     content.innerHTML = '<h1 class="section-title">Nothing to roll yet</h1>';
     return;
   }
-  let heading = 'Track';
-  let tracks = [];
-  if (roll.kind === 'track') {
-    heading = `Track · ${roll.title}`;
-    tracks = [roll];
-    playByName(roll.title, roll.artist);
-  } else if (roll.kind === 'artist') {
-    heading = `Artist · ${roll.artist}`;
-    tracks = roll.tracks || [];
-  } else if (roll.kind === 'album') {
-    heading = `Album · ${roll.album}`;
-    tracks = roll.tracks || [];
-  } else {
-    heading = `Category · ${roll.category}`;
-    tracks = roll.tracks || [];
-  }
-  let html = `<button class="dice-btn" onclick="rollDice()">Roll the dice</button><h1 class="section-title">${attr(heading)}</h1><div class="track-list">`;
-  tracks.forEach(track => { html += playlistRow(track); });
+  const pick = lists[Math.floor(Math.random() * lists.length)];
+  const data = await fetchJSON('/api/playlists/' + encodeURIComponent(pick.name));
+  loadedTracks = dedupeTracks(data.tracks || []);
+  let html = `<button class="dice-btn" onclick="rollDice()">Roll the dice</button><h1 class="section-title">${attr(pick.name)}</h1><div class="track-list">`;
+  loadedTracks.forEach(track => { html += playlistRow(track); });
   html += '</div>';
   content.innerHTML = html;
+  await startPlaylist(loadedTracks, Math.floor(Math.random() * loadedTracks.length));
 }
 
 function playlistRow(track) {
@@ -591,8 +748,9 @@ function playlistRow(track) {
 async function showPlaylist(name) {
   setActive('');
   const data = await fetchJSON('/api/playlists/' + encodeURIComponent(name));
+  loadedTracks = dedupeTracks(data.tracks || []);
   let html = `<h1 class="section-title">${attr(name)}</h1><div class="track-list">`;
-  data.tracks.forEach(track => { html += playlistRow(track); });
+  loadedTracks.forEach(track => { html += playlistRow(track); });
   html += '</div>';
   document.getElementById('content').innerHTML = html || '<p>This playlist is empty.</p>';
 }
@@ -603,12 +761,12 @@ showHome = async function () {
   const content = document.getElementById('content');
   content.innerHTML = '<h1 class="section-title">Loading...</h1>';
   try {
-    const lists = await fetchJSON('/api/playlists').catch(() => []);
+    const lists = (await fetchJSON('/api/playlists').catch(() => [])).filter(list => list.count > 0);
     let data = { for_you: [], recently_added: [] };
     try { data = await fetchJSON('/api/recommendations'); } catch (err) { /* library can be empty */ }
     let html = '<button class="dice-btn" onclick="rollDice()">Roll the dice</button>';
     if (lists.length) {
-      html += '<h1 class="section-title">Your playlists</h1><div class="carousel">';
+      html += '<h1 class="section-title">Your playlists</h1><div class="playlist-grid">';
       lists.forEach(list => {
         html += `<div class="card" onclick="showPlaylist('${escape(list.name)}')"><div class="card-img"><img alt="" src="${coverURL(list.sample_artist, list.sample_title)}" onerror="this.style.display='none'"></div><h3>${attr(list.name)}</h3><p>${list.count} tracks</p></div>`;
       });
@@ -627,9 +785,13 @@ showHome = async function () {
 
 showHome();
 document.getElementById('main').addEventListener('click', (event) => {
-  const row = event.target.closest('[data-play-title]');
+  const row = event.target.closest('.track-list [data-play-title]');
   if (!row) return;
-  playByName(row.dataset.playTitle, row.dataset.playArtist || '');
+  const title = row.dataset.playTitle;
+  const artist = row.dataset.playArtist || '';
+  const index = loadedTracks.findIndex(track => track.title === title && (track.artist || '') === artist);
+  if (index >= 0) startPlaylist(loadedTracks, index);
+  else playByName(title, artist);
 });
 </script>
 </body>
