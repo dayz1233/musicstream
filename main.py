@@ -223,8 +223,10 @@ def stream_file(file_path: Path, request: Request):
 # Routes
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    with open(BASE_DIR / "static" / "index.html", "r") as f:
-        return f.read()
+    page = BASE_DIR / "static" / "index.html"
+    if not page.is_file():
+        return HTMLResponse("<h1>MusicStream</h1><p>The player page is missing.</p>", status_code=500)
+    return HTMLResponse(page.read_text(encoding="utf-8"))
 
 @app.post("/api/upload")
 async def upload_music(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
@@ -303,27 +305,23 @@ def get_albums(db: Session = Depends(get_db)):
 
 @app.get("/api/recommendations")
 def get_recommendations(db: Session = Depends(get_db)):
-    # Simple recs: top played genres + random from those, plus recently added
-    top_genres = (
-        db.query(Track.genre)
-        .group_by(Track.genre)
-        .order_by(db.query(Track.play_count).filter(Track.genre == Track.genre).label("pc").desc())
-        .limit(5)
-        .all()
-    )
-    # Fallback
-    rec_tracks = db.query(Track).order_by(Track.play_count.desc()).limit(20).all()
+    rec_tracks = db.query(Track).order_by(Track.play_count.desc(), Track.added_at.desc()).limit(20).all()
     recent = db.query(Track).order_by(Track.added_at.desc()).limit(10).all()
+    genres = [g[0] for g in db.query(Track.genre).distinct().limit(12).all() if g[0]]
+
+    def row(track):
+        return {
+            "id": track.id,
+            "title": track.title,
+            "artist": track.artist,
+            "genre": track.genre,
+            "duration": track.duration,
+        }
+
     return {
-        "for_you": [
-            {"id": t.id, "title": t.title, "artist": t.artist, "genre": t.genre, "duration": t.duration}
-            for t in rec_tracks
-        ],
-        "recently_added": [
-            {"id": t.id, "title": t.title, "artist": t.artist, "genre": t.genre, "duration": t.duration}
-            for t in recent
-        ],
-        "genres": [g[0] for g in top_genres if g[0]],
+        "for_you": [row(track) for track in rec_tracks],
+        "recently_added": [row(track) for track in recent],
+        "genres": genres,
     }
 
 @app.post("/api/play/{track_id}")
