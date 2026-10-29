@@ -74,7 +74,7 @@ class MusicStreamApp:
         tk.Label(url_row, text="Update URL", fg="#b3b3b3", bg="#1a1a1a").pack(side="left")
         self.update_url = tk.Entry(url_row, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
         self.update_url.pack(side="left", fill="x", expand=True, padx=8)
-        self.update_url.insert(0, updater.load_config().get("url", ""))
+        self.update_url.insert(0, updater.load_config().get("url") or updater.DEFAULT_UPDATE_URL)
         tk.Button(url_row, text="Save", command=self.save_update_url,
                   bg="#333", fg="white", relief="flat").pack(side="left")
 
@@ -86,8 +86,9 @@ class MusicStreamApp:
         self.log.pack(fill="both", expand=True, padx=20, pady=5)
 
         self.log_message("Ready. Drag a Spotify playlist CSV onto the drop zone.")
-        self.log_message(f"Program version {updater.local_version()}. Updates download only files that changed.")
-        self.root.after(1500, self.check_updates_silent)
+        self.log_message(f"Program version {updater.local_version()}. New versions install themselves.")
+        self.root.after(800, self.start_server)
+        self.root.after(2000, self.schedule_updates)
 
     def log_message(self, msg):
         self.log.insert("end", msg + "\n")
@@ -186,10 +187,11 @@ class MusicStreamApp:
         self.log_message("Update URL saved. Music, playlists, and the database are never replaced.")
 
     def check_updates_silent(self):
-        if not updater.load_config().get("url"):
-            self.log_message("No update URL yet. Paste one and save it to get file-level updates.")
-            return
         threading.Thread(target=self._run_update, args=(False,), daemon=True).start()
+
+    def schedule_updates(self):
+        self.check_updates_silent()
+        self.root.after(10 * 60 * 1000, self.schedule_updates)
 
     def check_updates(self):
         updater.save_url(self.update_url.get())
@@ -211,9 +213,10 @@ class MusicStreamApp:
                 self.log_message(f"Up to date ({result.get('remote') or updater.local_version()}).")
                 return
             self.log_message("Updated: " + ", ".join(changed))
-            if messagebox.askyesno("MusicStream", "Update installed. Restart the window now?"):
-                self.stop_server()
-                os.execv(sys.executable, [sys.executable, str(BASE_DIR / "desktop_app.py")])
+            self.log_message("Restarting to use the new version.")
+            self.stop_server()
+            os.environ["MUSICSTREAM_AUTOSTART"] = "1"
+            os.execv(sys.executable, [sys.executable, str(BASE_DIR / "desktop_app.py")])
         self.root.after(0, finish)
 
     def trigger_sort(self):
