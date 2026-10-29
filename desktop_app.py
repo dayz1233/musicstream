@@ -37,7 +37,7 @@ class MusicStreamApp:
                           fg="#1db954", bg="#1a1a1a")
         header.pack(pady=10)
 
-        sub = tk.Label(root, text="Drag & drop Spotify playlist CSVs here  |  Server status below",
+        sub = tk.Label(root, text="Drag a folder of Spotify CSVs, or individual files",
                        fg="#b3b3b3", bg="#1a1a1a", font=("Segoe UI", 10))
         sub.pack()
 
@@ -46,7 +46,7 @@ class MusicStreamApp:
         self.drop_frame.pack(fill="x", padx=20, pady=10, ipady=40)
 
         self.drop_label = tk.Label(self.drop_frame,
-                                    text="Drop Spotify CSV files here\nor click to browse",
+                                    text="Drop a folder of CSV files here\nor click to choose a folder",
                                     fg="#ffffff", bg="#2a2a2a", font=("Segoe UI", 12))
         self.drop_label.pack(expand=True)
 
@@ -96,14 +96,35 @@ class MusicStreamApp:
         self.root.update_idletasks()
 
     def on_drop(self, event):
-        files = self.root.tk.splitlist(event.data)
-        for f in files:
-            self.process_csv(f)
+        self.ingest_paths(self.root.tk.splitlist(event.data))
 
     def browse_csv(self):
-        paths = filedialog.askopenfilenames(filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
-        for p in paths:
-            self.process_csv(p)
+        folder = filedialog.askdirectory(title="Select a folder of Spotify CSV files")
+        if folder:
+            self.ingest_paths([folder])
+
+    def ingest_paths(self, paths):
+        csvs = []
+        for raw in paths:
+            path = Path(str(raw).strip().strip("{}"))
+            if not path.exists():
+                self.log_message(f"Not found: {path}")
+                continue
+            if path.is_dir():
+                found = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() == ".csv")
+                self.log_message(f"Folder {path.name}: {len(found)} CSV file(s), including subfolders.")
+                csvs.extend(found)
+            else:
+                csvs.append(path)
+        seen = set()
+        for csv_path in csvs:
+            key = str(csv_path.resolve()).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            self.process_csv(csv_path)
+        if seen:
+            self.log_message(f"Finished {len(seen)} CSV file(s).")
 
     def process_csv(self, path):
         path = Path(path)
