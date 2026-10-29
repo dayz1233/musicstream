@@ -106,18 +106,9 @@ class MediaBrowser:
                 else:
                     box.put({"ok": False, "error": f"Unknown action {action}"})
             except Exception as exc:
-                self._shutdown(playwright, context)
-                playwright = context = None
-                if action == "open":
-                    try:
-                        playwright, context = self._ensure(None, None)
-                        box.put(self._open(self._page(context), payload.get("url") or ""))
-                        continue
-                    except Exception as retry_error:
-                        self._shutdown(playwright, context)
-                        playwright = context = None
-                        box.put({"ok": False, "error": str(retry_error)})
-                        continue
+                if not self._alive(context):
+                    self._shutdown(playwright, context)
+                    playwright = context = None
                 box.put({"ok": False, "error": str(exc)})
 
     def _alive(self, context) -> bool:
