@@ -409,13 +409,25 @@ async function showPresets() {
   document.getElementById('content').innerHTML = `<h1 class="section-title">Media server</h1>
     <p style="color:var(--text-sub);margin-bottom:16px">Opens a normal Chrome tab and uses the real mouse and keyboard. Each click becomes the next step. The first place you type is remembered as the search bar. Keep the Chrome window in the same place, because the steps are screen positions.</p>
     <input class="search-bar" id="media-url" placeholder="Media server address" value="${attr(browser.url || '')}">
+    <label style="color:var(--text-sub);display:block;margin-bottom:12px">Seconds between actions
+      <input id="action-gap" type="number" min="0" max="30" step="0.1" value="${Number(browser.delay ?? 0.8)}" style="width:70px;margin-left:8px;background:#242424;color:#fff;border:none;border-radius:8px;padding:6px">
+    </label>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <button class="dice-btn" onclick="saveActionGap()">Save timing</button>
       <button class="dice-btn" onclick="openMediaBrowser()">Open media browser</button>
       <button class="dice-btn" onclick="stopRecording()">Stop</button>
       <button class="dice-btn" onclick="clearRecording()">Clear</button>
     </div>
     <pre id="media-status" style="color:var(--text-sub);white-space:pre-wrap">${attr(lines)}</pre>`;
   if (browser.recording) pollMediaSteps();
+}
+
+async function saveActionGap() {
+  const seconds = document.getElementById('action-gap').value || '0.8';
+  const response = await fetch('/api/media-browser/delay?seconds=' + encodeURIComponent(seconds), { method: 'POST' });
+  const data = await response.json();
+  const status = document.getElementById('media-status');
+  if (status) status.textContent = data.detail || `Wait between actions is ${seconds} seconds.`;
 }
 
 async function openMediaBrowser() {
