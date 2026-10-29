@@ -108,6 +108,18 @@ class MusicStreamApp:
                   bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
         tk.Button(media_row, text="Type a song", command=self.type_media_song,
                   bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
+        seq_row = tk.Frame(root, bg="#1a1a1a")
+        seq_row.pack(fill="x", padx=20, pady=4)
+        tk.Button(seq_row, text="Record click in Chrome", command=self.record_media_click,
+                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
+        tk.Button(seq_row, text="Add typed text", command=self.add_media_text,
+                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
+        tk.Button(seq_row, text="Add key", command=self.add_media_key,
+                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
+        tk.Button(seq_row, text="Save sequence", command=self.save_media_sequence,
+                  bg="#333", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
+        tk.Button(seq_row, text="Run sequence", command=self.run_media_sequence,
+                  bg="#1db954", fg="white", relief="flat", padx=8).pack(side="left", padx=4)
 
         # Status / process log
         tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
@@ -158,6 +170,36 @@ class MusicStreamApp:
         artist = simpledialog.askstring("Type a song", "Artist", parent=self.root) or ""
         self.log_message(f"Typing a cleaned search for {title}.")
         self.post_local("/api/media-browser/search", {"title": title, "artist": artist, "delay": "1.5"})
+
+    def record_media_click(self):
+        self.log_message("Click inside the media Chrome window. This remembers the control, not a screen coordinate.")
+        self.post_local("/api/media-browser/sequence/click")
+
+    def add_media_text(self):
+        text = simpledialog.askstring("Typed text", "Text to type. {query} becomes the song.", parent=self.root)
+        if not text:
+            return
+        self.post_local("/api/media-browser/sequence/step", {"action": "type", "text": text})
+
+    def add_media_key(self):
+        key = simpledialog.askstring("Key", "Key name, such as Enter or Tab", parent=self.root) or ""
+        if not key:
+            return
+        self.post_local("/api/media-browser/sequence/step", {"action": "key", "key": key})
+
+    def save_media_sequence(self):
+        name = simpledialog.askstring("Save sequence", "Sequence name", parent=self.root) or ""
+        if not name:
+            return
+        self.post_local("/api/media-browser/sequence/save", {"name": name})
+
+    def run_media_sequence(self):
+        name = simpledialog.askstring("Run sequence", "Sequence name", parent=self.root) or ""
+        if not name:
+            return
+        title = simpledialog.askstring("Run sequence", "Song title", parent=self.root) or ""
+        artist = simpledialog.askstring("Run sequence", "Artist", parent=self.root) or ""
+        self.post_local("/api/media-browser/sequence/run", {"name": name, "title": title, "artist": artist})
 
     def log_message(self, msg):
         self.log.insert("end", msg + "\n")
