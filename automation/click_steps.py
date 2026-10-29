@@ -15,6 +15,97 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 CONFIG = BASE / "data" / "click_steps.json"
 PROFILE = BASE / "data" / "chrome-media-window"
+DEBUG_PORT = 9333
+IDLE_SECONDS = 20
+
+
+class TrafficWatch:
+    """Watch the media Chrome window. Background noise does not count as work."""
+
+    BACKGROUND = (
+        "clients2.google", "safebrowsing", "gstatic.com", "google-analytics",
+        "doubleclick", "googletagmanager", "update.googleapis", "favicon",
+        "chrome-extension://", "generate_204", "connectivitycheck",
+        "msftconnecttest", "detectportal", "clients.google",
+    )
+
+    def __init__(self):
+        self.last_real = time.time()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        self.stop()
+        self.last_real = time.time()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="media-traffic", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        if self._stop:
+            self._stop.set()
+
+    def idle(self, seconds: float = IDLE_SECONDS) -> bool:
+        if self._download_moving():
+            self.last_real = time.time()
+            return False
+        return time.time() - self.last_real >= seconds
+
+    def _download_moving(self) -> bool:
+        folder = Path.home() / "Downloads"
+        now = time.time()
+        try:
+            for path in folder.glob("*"):
+                if path.suffix.lower() in {".crdownload", ".tmp", ".part"} and now - path.stat().st_mtime < 4:
+                    return True
+        except OSError:
+            return False
+        return False
+
+    def _background(self, url: str) -> bool:
+        low = (url or "").lower()
+        return any(part in low for part in self.BACKGROUND)
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                import asyncio
+                asyncio.run(self._listen())
+            except Exception:
+                if self._stop.is_set():
+                    return
+                time.sleep(0.5)
+
+    async def _listen(self):
+        import asyncio
+        import urllib.request
+        import websockets
+        ws_url = ""
+        while not self._stop.is_set() and not ws_url:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{DEBUG_PORT}/json", timeout=2) as resp:
+                    tabs = json.loads(resp.read().decode())
+                for tab in tabs:
+                    if tab.get("type") == "page" and tab.get("webSocketDebuggerUrl"):
+                        ws_url = tab["webSocketDebuggerUrl"]
+                        break
+            except Exception:
+                await asyncio.sleep(0.4)
+        if not ws_url:
+            return
+        async with websockets.connect(ws_url, max_size=2_000_000) as socket:
+            await socket.send(json.dumps({"id": 1, "method": "Network.enable"}))
+            while not self._stop.is_set():
+                try:
+                    raw = await asyncio.wait_for(socket.recv(), timeout=2)
+                except asyncio.TimeoutError:
+                    continue
+                message = json.loads(raw)
+                if message.get("method") != "Network.requestWillBeSent":
+                    continue
+                url = message.get("params", {}).get("request", {}).get("url", "")
+                if url and not self._background(url):
+                    self.last_real = time.time()
 
 
 def _chrome_path() -> str:
@@ -45,6 +136,7 @@ class ClickSteps:
         self._hwnd = None
         self.message = ""
         self.next_message = ""
+        self.traffic = TrafficWatch()
         self._load()
 
     def _load(self):
@@ -147,6 +239,7 @@ class ClickSteps:
                 "--disable-session-crashed-bubble",
                 "--window-position=40,40",
                 "--window-size=1280,800",
+                f"--remote-debugging-port={DEBUG_PORT}",
             ]
             if url:
                 command.append(url)
@@ -165,6 +258,7 @@ class ClickSteps:
             time.sleep(0.2)
 
     def close_window(self):
+        self.traffic.stop()
         hwnd = self._hwnd
         self._hwnd = None
         if hwnd and sys.platform == "win32":
@@ -311,6 +405,7 @@ class ClickSteps:
             return {"ok": False, "error": str(exc)}
         labels = [self._public_step(index, step)["action"] for index, step in enumerate(steps, start=1)]
         self.note("Opening a fresh Chrome window on the site.", f"Next: {labels[0]}.")
+        self.traffic.start()
         self._launch(self.url)
         time.sleep(max(1.5, delay))
         query = (query or "").strip()
@@ -320,6 +415,9 @@ class ClickSteps:
         for index, step in enumerate(steps):
             upcoming = labels[index + 1] if index + 1 < len(labels) else "watch the Downloads folder, then close Chrome"
             self.note(f"Doing step {index + 1} of {len(steps)}: {labels[index]}.", f"Next: {upcoming}.")
+            if self.idle():
+                self.note("The page stopped doing anything besides background traffic.", "Closing this window and trying again.")
+                return {"ok": False, "retry": True, "error": "The page went idle."}
             self._focus()
             action = step.get("action")
             if action == "click":
@@ -337,6 +435,9 @@ class ClickSteps:
             time.sleep(max(0.2, delay))
         self.note("The clicks are finished.", "Next: wait until the file finishes in Downloads, then close Chrome.")
         return {"ok": True, "played": len(steps)}
+
+    def idle(self, seconds: float = IDLE_SECONDS) -> bool:
+        return self.traffic.idle(seconds)
 
 
 click_steps = ClickSteps()
