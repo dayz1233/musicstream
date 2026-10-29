@@ -10,11 +10,14 @@ import json
 import threading
 import subprocess
 import tkinter as tk
-from tkinter import scrolledtext, messagebox, filedialog
+from tkinter import scrolledtext, messagebox, filedialog, simpledialog
 from pathlib import Path
 import updater
 import webbrowser
 import socket
+import urllib.request
+import urllib.parse
+import urllib.error
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -92,6 +95,20 @@ class MusicStreamApp:
         tk.Button(url_row, text="Save", command=self.save_update_url,
                   bg="#333", fg="white", relief="flat").pack(side="left")
 
+        tk.Label(root, text="Media server browser", fg="#ffffff", bg="#1a1a1a",
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20, pady=(8, 0))
+        media_row = tk.Frame(root, bg="#1a1a1a")
+        media_row.pack(fill="x", padx=20, pady=4)
+        self.media_url = tk.Entry(media_row, bg="#2a2a2a", fg="#ffffff", insertbackground="white")
+        self.media_url.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.media_url.insert(0, "https://")
+        tk.Button(media_row, text="Open media browser", command=self.open_media_browser,
+                  bg="#1db954", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
+        tk.Button(media_row, text="Remember search box", command=self.arm_media_browser,
+                  bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
+        tk.Button(media_row, text="Type a song", command=self.type_media_song,
+                  bg="#333", fg="white", relief="flat", padx=10).pack(side="left", padx=4)
+
         # Status / process log
         tk.Label(root, text="Processes & Validation", fg="#ffffff", bg="#1a1a1a",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20)
@@ -107,6 +124,40 @@ class MusicStreamApp:
         self.log_message(f"Program version {updater.local_version()}. New versions install themselves.")
         self.root.after(800, self.start_server)
         self.root.after(2000, self.schedule_updates)
+
+    def post_local(self, path, query=None):
+        def work():
+            url = "http://127.0.0.1:8000" + path
+            if query:
+                url += "?" + urllib.parse.urlencode(query)
+            request = urllib.request.Request(url, data=b"", method="POST")
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    body = response.read().decode("utf-8", "replace")
+                self.root.after(0, lambda body=body: self.log_message(body[:600]))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", "replace")
+                self.root.after(0, lambda detail=detail: self.log_message("Media browser failed: " + detail[:600]))
+            except Exception as exc:
+                message = str(exc)
+                self.root.after(0, lambda message=message: self.log_message("Media browser failed: " + message))
+        threading.Thread(target=work, daemon=True).start()
+
+    def open_media_browser(self):
+        self.log_message("Opening a separate Chrome window. Your mouse will not be taken over.")
+        self.post_local("/api/media-browser/open", {"url": self.media_url.get().strip()})
+
+    def arm_media_browser(self):
+        self.log_message("Click the search box in the media Chrome window now.")
+        self.post_local("/api/media-browser/arm")
+
+    def type_media_song(self):
+        title = simpledialog.askstring("Type a song", "Song title", parent=self.root)
+        if not title:
+            return
+        artist = simpledialog.askstring("Type a song", "Artist", parent=self.root) or ""
+        self.log_message(f"Typing a cleaned search for {title}.")
+        self.post_local("/api/media-browser/search", {"title": title, "artist": artist, "delay": "1.5"})
 
     def log_message(self, msg):
         self.log.insert("end", msg + "\n")
