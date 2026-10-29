@@ -520,12 +520,34 @@ def media_browser_gap(action: str, seconds: float):
     return result
 
 
+@app.post("/api/media-browser/steps")
+def media_browser_edit_steps(indexes: str, wait: str = "", name: str = ""):
+    result = click_steps.edit_steps(indexes, wait, name)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Could not update those steps")
+    return result
+
+
+@app.post("/api/media-browser/estop")
+def media_browser_estop():
+    return click_steps.estop()
+
+
+@app.post("/api/media-browser/test")
+def media_browser_test(query: str = ""):
+    return click_steps.start_test(query)
+
+
 @app.post("/api/media-browser/fetch")
 def media_browser_fetch(query: str = "", title: str = "", artist: str = "", delay: Optional[float] = None, db: Session = Depends(get_db)):
     text = query or f"{artist} {title}".strip()
     last_error = "The media window did not finish."
     result = {}
+    click_steps.abort = False
     for attempt in range(1, 4):
+        if click_steps.abort:
+            last_error = "E-stop."
+            break
         started = time.time()
         click_steps.note(f"Try {attempt} of 3.", "Opening the site. If it sits idle, I will close it and try again.")
         try:
@@ -543,6 +565,9 @@ def media_browser_fetch(query: str = "", title: str = "", artist: str = "", dela
         downloaded = None
         deadline = time.time() + click_steps.gap_for("download")
         while time.time() < deadline:
+            if click_steps.abort:
+                last_error = "E-stop."
+                break
             downloaded = validator.wait_for_download(timeout=5, started_at=started)
             if downloaded:
                 break
