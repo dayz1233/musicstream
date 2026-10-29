@@ -506,28 +506,52 @@ def media_browser_clear():
 
 @app.post("/api/media-browser/fetch")
 def media_browser_fetch(query: str = "", title: str = "", artist: str = "", delay: float = 0.8, db: Session = Depends(get_db)):
-    started = time.time()
     text = query or f"{artist} {title}".strip()
-    result = click_steps.replay(text, delay)
-    if not result.get("ok"):
-        raise HTTPException(400, result.get("error") or "The recorded steps failed")
-    click_steps.note("Watching the Downloads folder.", "I will close the media Chrome window when the file is finished.")
-    downloaded = validator.wait_for_download(timeout=180, started_at=started)
-    if not downloaded:
-        click_steps.note("No finished download appeared.", "The media window was left open so you can see where it stopped.")
-        return {"ok": False, "browser": result, "error": "No download appeared in the Downloads folder."}
+    last_error = "The media window did not finish."
+    result = {}
+    for attempt in range(1, 4):
+        started = time.time()
+        click_steps.note(f"Try {attempt} of 3.", "Opening the site. If it sits idle, I will close it and try again.")
+        try:
+            result = click_steps.replay(text, delay)
+        except Exception as exc:
+            last_error = str(exc)
+            click_steps.close_window()
+            click_steps.note(f"Try {attempt} failed: {last_error}", "Closing the window and trying again." if attempt < 3 else "Stopped after 3 tries.")
+            continue
+        if not result.get("ok"):
+            last_error = result.get("error") or last_error
+            click_steps.close_window()
+            click_steps.note(last_error, "Trying again." if attempt < 3 else "Stopped after 3 tries.")
+            continue
+        downloaded = None
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            if click_steps.idle():
+                last_error = "The page was only doing background traffic, so I closed it."
+                click_steps.note(last_error, "Trying again." if attempt < 3 else "Stopped after 3 tries.")
+                break
+            downloaded = validator.wait_for_download(timeout=5, started_at=started)
+            if downloaded:
+                break
+        if not downloaded:
+            click_steps.close_window()
+            continue
+        click_steps.close_window()
+        validation = validator.validate(downloaded, {"title": title or query, "artist": artist})
+        audio_path = Path(validation.get("extracted") or str(downloaded))
+        destination = MUSIC_DIR / audio_path.name
+        counter = 1
+        while destination.exists():
+            destination = MUSIC_DIR / f"{audio_path.stem}_{counter}{audio_path.suffix}"
+            counter += 1
+        shutil.copy2(audio_path, destination)
+        scan_library(db)
+        click_steps.note(f"Saved {destination.name}.", "The media Chrome window is closed.")
+        return {"ok": True, "browser": result, "validation": validation, "saved": destination.name, "attempt": attempt}
     click_steps.close_window()
-    validation = validator.validate(downloaded, {"title": title or query, "artist": artist})
-    audio_path = Path(validation.get("extracted") or str(downloaded))
-    destination = MUSIC_DIR / audio_path.name
-    counter = 1
-    while destination.exists():
-        destination = MUSIC_DIR / f"{audio_path.stem}_{counter}{audio_path.suffix}"
-        counter += 1
-    shutil.copy2(audio_path, destination)
-    scan_library(db)
-    click_steps.note(f"Saved {destination.name}.", "The media Chrome window is closed.")
-    return {"ok": True, "browser": result, "validation": validation, "saved": destination.name}
+    click_steps.note("Stopped after 3 tries.", last_error)
+    return {"ok": False, "error": last_error, "browser": result}
 
 
 @app.post("/api/verify-playlist")
