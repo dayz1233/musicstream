@@ -409,44 +409,50 @@ async function showPresets() {
   document.getElementById('content').innerHTML = `<h1 class="section-title">Media server</h1>
     <p style="color:var(--text-sub);margin-bottom:16px">Opens a normal Chrome tab and uses the real mouse and keyboard. Each click becomes the next step. The first place you type is remembered as the search bar. Keep the Chrome window in the same place, because the steps are screen positions.</p>
     <input class="search-bar" id="media-url" placeholder="Media server address" value="${attr(browser.url || '')}">
-    <label style="color:var(--text-sub);display:block;margin-bottom:12px">Timing
-      <select id="gap-action" onchange="showGap()" style="margin-left:8px;background:#242424;color:#fff;border:none;border-radius:8px;padding:6px">
-        <option value="open">Page open</option>
-        <option value="click" selected>Menu click</option>
-        <option value="scroll">Scroll</option>
-        <option value="type">Typing</option>
-        <option value="key">Key press</option>
-        <option value="download">Download wait</option>
-      </select>
-      <input id="action-gap" type="number" min="0" max="600" step="0.1" value="0.4" style="width:80px;margin-left:8px;background:#242424;color:#fff;border:none;border-radius:8px;padding:6px">
-      seconds
-    </label>
+    <p id="record-notice" style="color:#c45c4a;font-weight:700;min-height:20px">${browser.recording ? 'RECORDING' : ''}</p>
+    <select id="step-list" multiple size="8" style="width:100%;max-width:560px;background:#121212;color:#fff;border:none;border-radius:8px;margin-bottom:12px">
+      ${(browser.steps || []).map(step => `<option value="${step.step}">${step.step}. ${attr(step.action)}    ${step.wait}s to next</option>`).join('')}
+    </select>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-      <button class="dice-btn" onclick="saveActionGap()">Save timing</button>
+      <input id="step-wait" placeholder="Seconds to next" style="width:120px;background:#242424;color:#fff;border:none;border-radius:8px;padding:8px">
+      <input id="step-name" placeholder="Name for selected" style="width:160px;background:#242424;color:#fff;border:none;border-radius:8px;padding:8px">
+      <button class="dice-btn" onclick="applySteps()">Apply to selected</button>
       <button class="dice-btn" onclick="openMediaBrowser()">Open media browser</button>
       <button class="dice-btn" onclick="stopRecording()">Stop</button>
       <button class="dice-btn" onclick="clearRecording()">Clear</button>
+      <button class="dice-btn" onclick="estopMedia()">E-stop</button>
+      <button class="dice-btn" onclick="testMedia()">Test</button>
     </div>
     <pre id="media-status" style="color:var(--text-sub);white-space:pre-wrap">${attr(lines)}</pre>`;
   if (browser.recording) pollMediaSteps();
-  window.mediaGaps = browser.gaps || { open: 2, click: 0.4, scroll: 0.3, type: 0.6, key: 0.4, download: 120 };
-  showGap();
 }
 
-function showGap() {
-  const action = document.getElementById('gap-action').value;
-  const box = document.getElementById('action-gap');
-  if (box) box.value = (window.mediaGaps && window.mediaGaps[action]) ?? box.value;
+async function applySteps() {
+  const list = document.getElementById('step-list');
+  const indexes = [...list.selectedOptions].map(option => option.value).join(',');
+  if (!indexes) {
+    alert('Select one or more steps first.');
+    return;
+  }
+  const params = new URLSearchParams({ indexes });
+  const wait = document.getElementById('step-wait').value.trim();
+  const name = document.getElementById('step-name').value.trim();
+  if (wait) params.set('wait', wait);
+  if (name) params.set('name', name);
+  await fetch('/api/media-browser/steps?' + params.toString(), { method: 'POST' });
+  showPresets();
 }
 
-async function saveActionGap() {
-  const action = document.getElementById('gap-action').value;
-  const seconds = document.getElementById('action-gap').value || '0';
-  const response = await fetch('/api/media-browser/gap?action=' + encodeURIComponent(action) + '&seconds=' + encodeURIComponent(seconds), { method: 'POST' });
-  const data = await response.json();
-  if (data.gaps) window.mediaGaps = data.gaps;
+async function estopMedia() {
+  await fetch('/api/media-browser/estop', { method: 'POST' });
   const status = document.getElementById('media-status');
-  if (status) status.textContent = data.detail || data.error || `${action} wait is ${seconds} seconds.`;
+  if (status) status.textContent = 'E-stop.';
+}
+
+async function testMedia() {
+  await fetch('/api/media-browser/test?query=' + encodeURIComponent('test song'), { method: 'POST' });
+  const status = document.getElementById('media-status');
+  if (status) status.textContent = 'Test started. Press E-stop to stop it.';
 }
 
 async function openMediaBrowser() {
