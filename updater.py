@@ -110,6 +110,25 @@ def fetch_json(url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def fetch_manifest(url: str) -> dict:
+    """Prefer the GitHub API so a cached raw file cannot pin an old version."""
+    if "dayz1233/musicstream" in (url or "") or not (url or "").strip():
+        request = urllib.request.Request(
+            "https://api.github.com/repos/dayz1233/musicstream/contents/update-manifest.json?ref=main",
+            headers={
+                "User-Agent": "MusicStream-Updater",
+                "Accept": "application/vnd.github.raw",
+                "Cache-Control": "no-cache",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception:
+            pass
+    return fetch_json(url)
+
+
 def download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     temporary = dest.with_suffix(dest.suffix + ".download")
@@ -127,9 +146,10 @@ def check_and_apply(url=None, log=print) -> dict:
     url = (url or config.get("url") or "").strip()
     if not url:
         return {"ok": False, "reason": "no_url", "changed": []}
-    manifest = fetch_json(url)
+    manifest = fetch_manifest(url)
     remote = str(manifest.get("version", ""))
     local = local_version()
+    log(f"Update manifest says {remote or 'unknown'}. This copy is {local}.")
     changed = []
     for item in manifest.get("files") or []:
         rel = str(item.get("path", ""))
