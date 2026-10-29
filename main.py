@@ -7,7 +7,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -98,6 +98,16 @@ class PlayHistory(Base):
     id = Column(Integer, primary_key=True)
     track_id = Column(Integer)
     played_at = Column(DateTime, default=datetime.utcnow)
+
+class ListenEvent(Base):
+    __tablename__ = "listen_events"
+    id = Column(Integer, primary_key=True)
+    title = Column(String, index=True)
+    artist = Column(String, default="")
+    genres = Column(String, default="")
+    album = Column(String, default="")
+    kind = Column(String, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class PresetAction(Base):
     __tablename__ = "preset_actions"
@@ -493,7 +503,10 @@ def list_playlists():
             tracks = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             tracks = []
-        sample = tracks[0] if isinstance(tracks, list) and tracks else {}
+        tracks = dedupe_tracks(tracks if isinstance(tracks, list) else [])
+        if not tracks:
+            continue
+        sample = tracks[0]
         items.append({
             "name": path.stem[len("playlist_"):],
             "count": len(tracks) if isinstance(tracks, list) else 0,
@@ -510,7 +523,7 @@ def get_playlist(name: str):
     if not path.is_file():
         raise HTTPException(404, "Playlist not found")
     tracks = json.loads(path.read_text(encoding="utf-8"))
-    return {"name": safe, "tracks": tracks if isinstance(tracks, list) else []}
+    return {"name": safe, "tracks": dedupe_tracks(tracks if isinstance(tracks, list) else [])}
 
 
 _cover_lock = threading.Lock()
@@ -583,6 +596,26 @@ def match_track(title: str, artist: str = "", db: Session = Depends(get_db)):
     return {"found": True, "id": track.id, "title": track.title, "artist": track.artist}
 
 
+def song_key(track: dict):
+    title = (track.get("title") or "").strip().lower()
+    artist = (track.get("artist") or "").split(";")[0].strip().lower()
+    return title, artist
+
+
+def dedupe_tracks(tracks):
+    seen = set()
+    cleaned = []
+    for track in tracks:
+        if not isinstance(track, dict):
+            continue
+        key = song_key(track)
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(track)
+    return cleaned
+
+
 def _playlist_tracks():
     pool = []
     for path in sorted(DATA_DIR.glob("playlist_*.json")):
@@ -591,8 +624,8 @@ def _playlist_tracks():
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(tracks, list):
-            pool.extend(track for track in tracks if isinstance(track, dict) and track.get("title"))
-    return pool
+            pool.extend(tracks)
+    return dedupe_tracks(pool)
 
 
 @app.get("/api/roll")
@@ -621,6 +654,56 @@ def roll_dice():
     category = ((picked.get("genres") or "Unknown").split(",")[0].strip()) or "Unknown"
     matches = [track for track in pool if category.lower() in (track.get("genres") or "").lower()][:30]
     return {"kind": "category", "category": category, "tracks": matches}
+
+
+@app.get("/api/categories")
+def list_categories():
+    counts = {}
+    for track in _playlist_tracks():
+        for genre in (track.get("genres") or "").split(","):
+            name = genre.strip()
+            if not name or name.lower() == "unknown":
+                continue
+            counts[name] = counts.get(name, 0) + 1
+    return [{"name": name, "count": count} for name, count in sorted(counts.items()) if count]
+
+
+@app.get("/api/category/{name}")
+def category_tracks(name: str):
+    wanted = name.strip().lower()
+    tracks = []
+    for track in _playlist_tracks():
+        genres = [genre.strip().lower() for genre in (track.get("genres") or "").split(",")]
+        if wanted in genres:
+            tracks.append(track)
+    return {"name": name, "tracks": tracks}
+
+
+@app.post("/api/listening")
+def add_listening(title: str, artist: str = "", genres: str = "", album: str = "", kind: str = "play", db: Session = Depends(get_db)):
+    event = ListenEvent(
+        title=title.strip(),
+        artist=artist.strip(),
+        genres=genres.strip(),
+        album=album.strip(),
+        kind="skip" if kind == "skip" else "play",
+    )
+    db.add(event)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/listening")
+def recent_listening(minutes: int = 30, db: Session = Depends(get_db)):
+    plays_since = datetime.utcnow() - timedelta(minutes=max(1, min(minutes, 180)))
+    skips_since = datetime.utcnow() - timedelta(days=14)
+    plays = db.query(ListenEvent).filter(ListenEvent.kind == "play", ListenEvent.created_at >= plays_since).all()
+    skips = db.query(ListenEvent).filter(ListenEvent.kind == "skip", ListenEvent.created_at >= skips_since).all()
+
+    def row(event):
+        return {"title": event.title, "artist": event.artist, "genres": event.genres, "album": event.album}
+
+    return {"plays": [row(event) for event in plays], "skips": [row(event) for event in skips]}
 
 
 if __name__ == "__main__":
