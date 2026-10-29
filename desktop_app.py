@@ -189,6 +189,12 @@ class MusicStreamApp:
                     "genres": t.get("Genres", ""),
                     "uri": t.get("Track URI", ""),
                     "popularity": t.get("Popularity", ""),
+                    "image": (
+                        t.get("Album Image URL")
+                        or t.get("Album Cover URL")
+                        or t.get("Image")
+                        or ""
+                    ).strip(),
                 })
             with open(out, "w", encoding="utf-8") as f:
                 json.dump(simplified, f, indent=2)
