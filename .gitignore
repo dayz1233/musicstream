@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+data/
+music/
+music_hot/
+music_cold/
+uploads/
+*.db
+*.download
