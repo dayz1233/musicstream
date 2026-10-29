@@ -146,7 +146,7 @@ class MusicStreamApp:
     def open_media_browser(self):
         self.media_seen = 0
         self.log_message("Opening a normal Chrome tab. Clicks and typing are counted as steps. Press Stop when finished.")
-        self.post_local("/api/media-browser/open", {"url": self.media_url.get().strip()})
+        self.post_local("/api/media-browser/open", {"address": self.media_url.get().strip()})
         self.root.after(600, self.poll_media_steps)
 
     def poll_media_steps(self):
