@@ -130,9 +130,18 @@ def fetch_manifest(url: str) -> dict:
 
 
 def download(url: str, dest: Path) -> None:
+    prefix = "https://raw.githubusercontent.com/dayz1233/musicstream/main/"
+    headers = {"User-Agent": "MusicStream-Updater", "Cache-Control": "no-cache"}
+    if url.startswith(prefix):
+        rel = url[len(prefix):]
+        url = "https://api.github.com/repos/dayz1233/musicstream/contents/" + rel + "?ref=main"
+        headers["Accept"] = "application/vnd.github.raw"
+    else:
+        url = url + ("&" if "?" in url else "?") + "t=" + str(int(time.time()))
     dest.parent.mkdir(parents=True, exist_ok=True)
     temporary = dest.with_suffix(dest.suffix + ".download")
-    with _get(url, 120) as response, open(temporary, "wb") as handle:
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=120) as response, open(temporary, "wb") as handle:
         while True:
             chunk = response.read(256 * 1024)
             if not chunk:
