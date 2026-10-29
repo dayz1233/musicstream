@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "files": [
     {
       "path": "ANDROID_AND_PRESETS.md",
@@ -18,7 +18,7 @@
     },
     {
       "path": "VERSION",
-      "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
+      "sha256": "1575e1af4a95f12f70b4ee6a6adce8160953d93ea17dc2611b90883ccc3ad3b8",
       "url": "https://raw.githubusercontent.com/dayz1233/musicstream/main/VERSION"
     },
     {
@@ -33,7 +33,7 @@
     },
     {
       "path": "desktop_app.py",
-      "sha256": "2d837bf947642a33e001cd174d91a5af0ed2184d83471d97fe597f3396f02a8d",
+      "sha256": "932a8ffcde74dfbecd726a4b0fcf5bc544a84677dfde59e93f65e93c06864550",
       "url": "https://raw.githubusercontent.com/dayz1233/musicstream/main/desktop_app.py"
     },
     {
@@ -63,7 +63,7 @@
     },
     {
       "path": "updater.py",
-      "sha256": "3172b275a4c975af895dd2caa4dd02afe82e5d3e22fe3424c5b9ef1976f0a164",
+      "sha256": "d1d4b1aef6d9bf1c5c583d9e97129c743b44354520a878ed36d8187e3105c195",
       "url": "https://raw.githubusercontent.com/dayz1233/musicstream/main/updater.py"
     }
   ]
