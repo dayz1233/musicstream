@@ -481,6 +481,31 @@ def search_from_phone(q: str, db: Session = Depends(get_db)):
     return [{"id": t.id, "title": t.title, "artist": t.artist, "album": t.album} for t in tracks]
 
 
+@app.get("/api/playlists")
+def list_playlists():
+    items = []
+    for path in sorted(DATA_DIR.glob("playlist_*.json")):
+        try:
+            tracks = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            tracks = []
+        items.append({
+            "name": path.stem[len("playlist_"):],
+            "count": len(tracks) if isinstance(tracks, list) else 0,
+        })
+    return items
+
+
+@app.get("/api/playlists/{name}")
+def get_playlist(name: str):
+    safe = Path(name).name
+    path = DATA_DIR / f"playlist_{safe}.json"
+    if not path.is_file():
+        raise HTTPException(404, "Playlist not found")
+    tracks = json.loads(path.read_text(encoding="utf-8"))
+    return {"name": safe, "tracks": tracks if isinstance(tracks, list) else []}
+
+
 if __name__ == "__main__":
     import uvicorn
     db = SessionLocal()
