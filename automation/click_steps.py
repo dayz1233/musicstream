@@ -136,6 +136,7 @@ class ClickSteps:
         self._hwnd = None
         self.message = ""
         self.next_message = ""
+        self.delay = 0.8
         self.traffic = TrafficWatch()
         self._load()
 
@@ -148,10 +149,14 @@ class ClickSteps:
             return
         self.steps = data.get("steps") or []
         self.url = data.get("url") or ""
+        try:
+            self.delay = min(30.0, max(0.0, float(data.get("delay", 0.8))))
+        except (TypeError, ValueError):
+            self.delay = 0.8
 
     def _save(self):
         CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG.write_text(json.dumps({"url": self.url, "steps": self.steps}, indent=2), encoding="utf-8")
+        CONFIG.write_text(json.dumps({"url": self.url, "steps": self.steps, "delay": self.delay}, indent=2), encoding="utf-8")
 
     def status(self) -> dict:
         with self.lock:
@@ -162,6 +167,7 @@ class ClickSteps:
                 "steps": [self._public_step(index, step) for index, step in enumerate(self.steps, start=1)],
                 "message": self.message,
                 "next": self.next_message,
+                "delay": self.delay,
             }
 
     def _public_step(self, number, step) -> dict:
@@ -183,6 +189,17 @@ class ClickSteps:
         with self.lock:
             self.message = message
             self.next_message = nxt
+
+    def set_delay(self, seconds: float) -> dict:
+        try:
+            seconds = min(30.0, max(0.0, float(seconds)))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Enter a number of seconds."}
+        with self.lock:
+            self.delay = seconds
+        self._save()
+        self.note(f"Wait between actions is {seconds:g} seconds.", "")
+        return self.status()
 
     def _hwnds(self):
         if sys.platform != "win32":
@@ -391,9 +408,12 @@ class ClickSteps:
             self.steps.append({"action": "type", "text": text, "search": search, "t": time.time()})
         self.note("Recorded typing in the search bar." if search else "Recorded typing.", "Next action will be counted as the following step.")
 
-    def replay(self, query: str, delay: float = 0.8) -> dict:
+    def replay(self, query: str, delay: float = None) -> dict:
         if self.recording:
             self.stop()
+        if delay is None:
+            delay = self.delay
+        delay = min(30.0, max(0.0, float(delay)))
         with self.lock:
             steps = list(self.steps)
         if not steps:
