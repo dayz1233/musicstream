@@ -82,22 +82,76 @@ class MediaBrowser:
                     box.put(self._status(context))
                     continue
                 playwright, context = self._ensure(playwright, context)
-                page = context.pages[0] if context.pages else context.new_page()
+                page = self._page(context)
                 if action == "open":
                     box.put(self._open(page, payload.get("url") or ""))
                 elif action == "arm":
                     box.put(self._arm(page))
                 elif action == "search":
                     box.put(self._search(page, payload))
+                elif action == "record-click":
+                    box.put(self._record_click(page))
+                elif action == "add-step":
+                    box.put(self._add_step(payload))
+                elif action == "save-sequence":
+                    box.put(self._save_sequence(payload.get("name") or ""))
+                elif action == "run-sequence":
+                    box.put(self._run_sequence(page, payload))
                 else:
                     box.put({"ok": False, "error": f"Unknown action {action}"})
             except Exception as exc:
-                context = None
+                self._shutdown(playwright, context)
+                playwright = context = None
+                if action == "open":
+                    try:
+                        playwright, context = self._ensure(None, None)
+                        box.put(self._open(self._page(context), payload.get("url") or ""))
+                        continue
+                    except Exception as retry_error:
+                        self._shutdown(playwright, context)
+                        playwright = context = None
+                        box.put({"ok": False, "error": str(retry_error)})
+                        continue
                 box.put({"ok": False, "error": str(exc)})
 
+    def _alive(self, context) -> bool:
+        if context is None:
+            return False
+        try:
+            context.pages
+            return True
+        except Exception:
+            return False
+
+    def _shutdown(self, playwright, context):
+        try:
+            if context is not None:
+                context.close()
+        except Exception:
+            pass
+        try:
+            if playwright is not None:
+                playwright.stop()
+        except Exception:
+            pass
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            try:
+                (PROFILE / name).unlink()
+            except OSError:
+                pass
+
+    def _page(self, context):
+        page = context.pages[0] if context.pages else context.new_page()
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+        return page
+
     def _ensure(self, playwright, context):
-        if context is not None:
+        if self._alive(context):
             return playwright, context
+        self._shutdown(playwright, context)
         from playwright.sync_api import sync_playwright
         PROFILE.mkdir(parents=True, exist_ok=True)
         playwright = sync_playwright().start()
@@ -109,7 +163,7 @@ class MediaBrowser:
             headless=False,
             accept_downloads=True,
             downloads_path=str(downloads),
-            viewport={"width": 1200, "height": 800},
+            no_viewport=True,
             args=["--disable-blink-features=AutomationControlled"],
         )
         if not context.pages:
@@ -132,9 +186,11 @@ class MediaBrowser:
         config = self._config()
         return {
             "ok": True,
-            "open": context is not None,
+            "open": self._alive(context),
             "url": config.get("url") or "",
             "ready": bool(config.get("selector")),
+            "draft": config.get("draft") or [],
+            "sequences": list((config.get("sequences") or {}).keys()),
         }
 
     def _open(self, page, url: str) -> dict:
@@ -176,6 +232,93 @@ class MediaBrowser:
         config["selector"] = selector
         self._save_config(config)
         return {"ok": True, "selector": selector}
+
+    def _capture_selector(self, page) -> str:
+        return page.evaluate(
+            """() => new Promise((resolve) => {
+                const once = (event) => {
+                    const target = event.target;
+                    const el = target.closest('input, textarea, button, a, [role="button"], [contenteditable="true"]') || target;
+                    let found = '';
+                    if (el.id) found = '#' + CSS.escape(el.id);
+                    else if (el.getAttribute('name')) found = el.tagName.toLowerCase() + '[name="' + el.getAttribute('name').replaceAll('"', '') + '"]';
+                    else if (el.getAttribute('placeholder')) found = el.tagName.toLowerCase() + '[placeholder="' + el.getAttribute('placeholder').replaceAll('"', '') + '"]';
+                    else if (el.getAttribute('aria-label')) found = el.tagName.toLowerCase() + '[aria-label="' + el.getAttribute('aria-label').replaceAll('"', '') + '"]';
+                    else {
+                        const mark = 'ms-' + Date.now();
+                        el.setAttribute('data-musicstream-step', mark);
+                        found = '[data-musicstream-step="' + mark + '"]';
+                    }
+                    resolve(found);
+                };
+                document.addEventListener('click', once, {capture: true, once: true});
+                setTimeout(() => resolve(''), 60000);
+            })"""
+        )
+
+    def _record_click(self, page) -> dict:
+        selector = self._capture_selector(page)
+        if not selector:
+            return {"ok": False, "error": "No click was made in the media Chrome window."}
+        config = self._config()
+        draft = config.get("draft") or []
+        draft.append({"action": "click", "selector": selector})
+        config["draft"] = draft
+        self._save_config(config)
+        return {"ok": True, "draft": draft}
+
+    def _add_step(self, payload: dict) -> dict:
+        action = payload.get("action") or ""
+        if action not in ("type", "key", "wait"):
+            return {"ok": False, "error": "Step must be type, key, or wait."}
+        step = {"action": action}
+        if action == "type":
+            step["text"] = payload.get("text") or "{query}"
+        elif action == "key":
+            step["key"] = payload.get("key") or "Enter"
+        else:
+            step["seconds"] = float(payload.get("seconds") or 1)
+        config = self._config()
+        draft = config.get("draft") or []
+        draft.append(step)
+        config["draft"] = draft
+        self._save_config(config)
+        return {"ok": True, "draft": draft}
+
+    def _save_sequence(self, name: str) -> dict:
+        name = name.strip()
+        config = self._config()
+        draft = config.get("draft") or []
+        if not name or not draft:
+            return {"ok": False, "error": "Give the sequence a name after adding at least one step."}
+        sequences = config.get("sequences") or {}
+        sequences[name] = draft
+        config["sequences"] = sequences
+        config["draft"] = []
+        self._save_config(config)
+        return {"ok": True, "saved": name, "steps": draft}
+
+    def _run_sequence(self, page, payload: dict) -> dict:
+        config = self._config()
+        name = (payload.get("name") or "").strip()
+        steps = (config.get("sequences") or {}).get(name)
+        if not steps:
+            return {"ok": False, "error": "That sequence is not saved."}
+        title = clean_text(payload.get("title") or "")
+        artist = clean_text((payload.get("artist") or "").split(";")[0])
+        query = payload.get("query") or (f"{artist} {core_title(title)}".strip())
+        for step in steps:
+            action = step.get("action")
+            if action == "click":
+                page.locator(step["selector"]).first.click(timeout=8000)
+            elif action == "type":
+                text = (step.get("text") or "").replace("{query}", query).replace("{title}", title).replace("{artist}", artist)
+                page.keyboard.type(text, delay=35)
+            elif action == "key":
+                page.keyboard.press(step.get("key") or "Enter")
+            elif action == "wait":
+                page.wait_for_timeout(int(float(step.get("seconds") or 1) * 1000))
+        return {"ok": True, "ran": name, "query": query}
 
     def _search(self, page, payload: dict) -> dict:
         config = self._config()
