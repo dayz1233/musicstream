@@ -70,7 +70,29 @@ body {
   font-size: 48px;
   color: #555;
 }
-.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.row-art {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #333;
+}
+.dice-btn {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 24px;
+  padding: 12px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  margin: 4px 0 24px;
+}
 .card p { font-size: 13px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .track-list { width: 100%; }
 .track-row {
@@ -238,11 +260,19 @@ async function showHome() {
   loadGenres();
 }
 
+function coverURL(artist, title) {
+  return `/api/cover?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}`;
+}
+
+function attr(value) {
+  return String(value || '').replace(/&/g, '&').replace(/"/g, '"').replace(/</g, '<');
+}
+
 function cardHTML(t) {
-  return `<div class="card" onclick="playTrack(${t.id}, '${escape(t.title)}', '${escape(t.artist)}')">
-    <div class="card-img">🎵</div>
-    <h3>${t.title}</h3>
-    <p>${t.artist}</p>
+  return `<div class="card" data-play-title="${attr(t.title)}" data-play-artist="${attr(t.artist)}">
+    <div class="card-img"><img alt="" src="${coverURL(t.artist, t.title)}" onerror="this.style.display='none'"></div>
+    <h3>${attr(t.title)}</h3>
+    <p>${attr(t.artist)}</p>
   </div>`;
 }
 
@@ -498,19 +528,71 @@ function sendControl(action, payload = {}) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({action, payload}));
 }
 
+async function playByName(title, artist) {
+  document.querySelector('#now-playing .title').textContent = title || 'Unknown';
+  document.querySelector('#now-playing .artist').textContent = 'Looking for audio...';
+  const match = await fetchJSON(`/api/match?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`);
+  if (match.found) {
+    await playTrack(match.id, match.title, match.artist);
+    return;
+  }
+  if (match.preview) {
+    currentTrack = { title, artist, preview: true };
+    audio.src = match.preview;
+    document.querySelector('#now-playing .artist').textContent = (artist || 'Unknown') + ' · 30 second preview';
+    await audio.play();
+    document.getElementById('play-btn').textContent = 'Pause';
+    return;
+  }
+  document.querySelector('#now-playing .artist').textContent = 'No audio file for this song yet';
+}
+
+async function rollDice() {
+  setActive('Home');
+  const content = document.getElementById('content');
+  content.innerHTML = '<h1 class="section-title">Rolling...</h1>';
+  const roll = await fetchJSON('/api/roll');
+  if (roll.kind === 'empty') {
+    content.innerHTML = '<h1 class="section-title">Nothing to roll yet</h1>';
+    return;
+  }
+  let heading = 'Track';
+  let tracks = [];
+  if (roll.kind === 'track') {
+    heading = `Track · ${roll.title}`;
+    tracks = [roll];
+    playByName(roll.title, roll.artist);
+  } else if (roll.kind === 'artist') {
+    heading = `Artist · ${roll.artist}`;
+    tracks = roll.tracks || [];
+  } else if (roll.kind === 'album') {
+    heading = `Album · ${roll.album}`;
+    tracks = roll.tracks || [];
+  } else {
+    heading = `Category · ${roll.category}`;
+    tracks = roll.tracks || [];
+  }
+  let html = `<button class="dice-btn" onclick="rollDice()">Roll the dice</button><h1 class="section-title">${attr(heading)}</h1><div class="track-list">`;
+  tracks.forEach(track => { html += playlistRow(track); });
+  html += '</div>';
+  content.innerHTML = html;
+}
+
+function playlistRow(track) {
+  return `<div class="track-row" data-play-title="${attr(track.title)}" data-play-artist="${attr(track.artist)}">
+    <img class="row-art" alt="" src="${coverURL(track.artist, track.title)}" onerror="this.style.visibility='hidden'">
+    <div><div class="title">${attr(track.title || '')}</div><div class="artist">${attr(track.artist || '')}</div></div>
+    <div class="album">${attr(track.album || '')}</div>
+    <div class="duration">${track.duration_ms ? formatTime(track.duration_ms / 1000) : ''}</div>
+    <span>Play</span>
+  </div>`;
+}
+
 async function showPlaylist(name) {
   setActive('');
   const data = await fetchJSON('/api/playlists/' + encodeURIComponent(name));
-  let html = `<h1 class="section-title">${name}</h1><p style="color:var(--text-sub);margin-bottom:16px">${data.tracks.length} tracks from your Spotify export. Upload the audio file to play one.</p><div class="track-list">`;
-  data.tracks.forEach((track, i) => {
-    html += `<div class="track-row">
-      <span>${i + 1}</span>
-      <div><div class="title">${track.title || ''}</div><div class="artist">${track.artist || ''}</div></div>
-      <div class="album">${track.album || ''}</div>
-      <div class="duration">${track.duration_ms ? formatTime(track.duration_ms / 1000) : ''}</div>
-      <span></span>
-    </div>`;
-  });
+  let html = `<h1 class="section-title">${attr(name)}</h1><div class="track-list">`;
+  data.tracks.forEach(track => { html += playlistRow(track); });
   html += '</div>';
   document.getElementById('content').innerHTML = html || '<p>This playlist is empty.</p>';
 }
@@ -524,11 +606,11 @@ showHome = async function () {
     const lists = await fetchJSON('/api/playlists').catch(() => []);
     let data = { for_you: [], recently_added: [] };
     try { data = await fetchJSON('/api/recommendations'); } catch (err) { /* library can be empty */ }
-    let html = '';
+    let html = '<button class="dice-btn" onclick="rollDice()">Roll the dice</button>';
     if (lists.length) {
       html += '<h1 class="section-title">Your playlists</h1><div class="carousel">';
       lists.forEach(list => {
-        html += `<div class="card" onclick="showPlaylist('${escape(list.name)}')"><div class="card-img">♪</div><h3>${list.name}</h3><p>${list.count} tracks</p></div>`;
+        html += `<div class="card" onclick="showPlaylist('${escape(list.name)}')"><div class="card-img"><img alt="" src="${coverURL(list.sample_artist, list.sample_title)}" onerror="this.style.display='none'"></div><h3>${attr(list.name)}</h3><p>${list.count} tracks</p></div>`;
       });
       html += '</div>';
     }
@@ -544,6 +626,11 @@ showHome = async function () {
 };
 
 showHome();
+document.getElementById('main').addEventListener('click', (event) => {
+  const row = event.target.closest('[data-play-title]');
+  if (!row) return;
+  playByName(row.dataset.playTitle, row.dataset.playArtist || '');
+});
 </script>
 </body>
 </html>
